@@ -1,4 +1,4 @@
-# Memex - Private Hybrid Search for Browser History
+# Recall - Private Hybrid Search for Browser History
 
 Search what you meant, not what you typed — with on-device AI. Memex is a Chrome extension that combines semantic search with keyword search to find the right page from your browsing history, fast and privately. No data ever leaves your machine.
 
