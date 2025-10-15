@@ -1,0 +1,35 @@
+{
+  "name": "memex-extension",
+  "version": "1.0.0",
+  "description": "Private Semantic Search for Browser History - Search what you meant, not what you typed",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch --mode development",
+    "build": "tsc --noEmit && npm run build:eval-data && vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit",
+    "eval": "tsx evals/runner.ts",
+    "eval:chrome": "tsx evals/chrome-runner.ts",
+    "build:eval-data": "tsx evals/generate-eval-data.ts"
+  },
+  "keywords": [
+    "chrome-extension",
+    "semantic-search",
+    "browser-history",
+    "ai",
+    "embeddings"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "puppeteer": "^24.24.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0",
+    "vite-plugin-static-copy": "^1.0.6"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.2"
+  }
+}

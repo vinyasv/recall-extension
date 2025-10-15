@@ -1,0 +1,130 @@
+Rewind Extension Architecture (ASCII Overview)
+===========================================
+
+            ┌───────────────────────────────────────────┐
+            │               Browser UI                  │
+            │───────────────────────────────────────────│
+            │  Toolbar Icon / Popup (Cmd+Shift+E)       │
+            │        │                                  │
+            │        ▼                                  │
+            │  ┌────────────┐                           │
+            │  │ Popup HTML │   sends TOGGLE_SIDEBAR    │
+            │  └────────────┘──────────────┬────────────┘
+            │                              │
+            └──────────────────────────────▼───────────────┐
+                                           Content Script   │
+                                           (src/content)    │
+                                           • Injects sidebar│
+                                           • Runs extractor │
+                                           • Waits on SPAs  │
+                                           • Listens for    │
+                                             background msgs│
+                                           │                │
+                                           │EXTRACT_CONTENT │
+                                           ▼                │
+                                 ┌────────────────────┐      │
+                                 │ ContentExtractor   │      │
+                                 │  - Waits for SPA   │      │
+                                 │  - Extracts text   │      │
+                                 └─────────┬──────────┘      │
+                                           │ sends data      │
+                                           ▼                │
+───────────────────────────────────────────┼────────────────┤
+ Browser Internals                          │                │
+───────────────────────────────────────────┼────────────────┤
+                                           ▼                │
+            ┌──────────────────────────────────────────────┐ │
+            │        Background Service Worker             │ │
+            │                (src/background)              │ │
+            │----------------------------------------------│ │
+            │  Messages & Events                           │ │
+            │   • onInstalled/onStartup -> initialize      │ │
+            │   • chrome.tabs, webNavigation listeners     │ │
+            │                                              │ │
+            │  Components:                                 │ │
+            │   ┌───────────────────────────────────────┐  │ │
+            │   │ TabMonitor                            │  │ │
+            │   │  - Watches tab updates/activation     │  │ │
+            │   │  - Immediately queues pages           │  │ │
+            │   └──────────────┬────────────────────────┘  │ │
+            │                  │ adds TabInfo               │ │
+            │                  ▼                            │ │
+            │   ┌───────────────────────────────────────┐  │ │
+            │   │ IndexingQueue                         │  │ │
+            │   │  - Persistent queue (storage.local)   │  │ │
+            │   │  - Handles retries, max attempts      │  │ │
+            │   └──────────────┬────────────────────────┘  │ │
+            │                  │ getNext()                 │ │
+            │                  ▼                            │ │
+            │   ┌───────────────────────────────────────┐  │ │
+            │   │ Queue Processor (setInterval)         │  │ │
+            │   │  - Pulls next page                    │  │ │
+            │   │  - Calls IndexingPipeline             │  │ │
+            │   └──────────────┬────────────────────────┘  │ │
+            │                  │ async processPage          │ │
+            │                  ▼                            │ │
+            │   ┌───────────────────────────────────────┐  │ │
+            │   │ IndexingPipeline                      │  │ │
+            │   │  Stage 1: request EXTRACT_CONTENT     │  │ │
+            │   │  Stage 2: SummarizerService           │  │ │
+            │   │  Stage 3: EmbeddingService (ONNX)     │  │ │
+            │   │  Stage 4: VectorStore (IndexedDB)     │  │ │
+            │   └──────────────┬────────────────────────┘  │ │
+            │                  │ writes PageRecord          │ │
+            │                  ▼                            │ │
+            │   ┌───────────────────────────────────────┐  │ │
+            │   │ VectorStore (IndexedDB)               │  │ │
+            │   │  - Stores embeddings & metadata       │  │ │
+            │   │  - Supports search & stats            │  │ │
+            │   └───────────────────────────────────────┘  │ │
+            │                                              │ │
+            │  Auxiliary Services:                         │ │
+            │   • EmbeddingService -> ONNX Runtime wasm    │ │
+            │   • SummarizerService -> Chrome AI / fallback│ │
+            │   • hybridSearch -> RRF fusion coordinator   │ │
+            │     ├─> vectorSearch -> cosine similarity    │ │
+            │     └─> keywordSearch -> TF-IDF scoring      │ │
+            │                                              │ │
+            └──────────────────────────────────────────────┘ │
+                                                             │
+─────────────────────────────────────────────────────────────┘
+
+Sidebar UX Flow (with Hybrid Search)
+-------------------------------------
+
+Active Tab ▷ Content Script Sidebar ▷ User searches ▷ message `SEARCH_QUERY`
+  │                                                  │
+  │                                                  ▼
+  │                                          Background HybridSearch
+  │                                                  │
+  │                                    ┌─────────────┴─────────────┐
+  │                                    ▼                           ▼
+  │                            VectorSearch (semantic)     KeywordSearch (TF-IDF)
+  │                            • EmbeddingService          • Tokenization
+  │                            • Cosine similarity         • TF-IDF scoring
+  │                            • Ranking                   • Multi-field match
+  │                                    │                           │
+  │                                    └─────────────┬─────────────┘
+  │                                                  ▼
+  │                                     Reciprocal Rank Fusion (RRF)
+  │                                     • Combine rankings
+  │                                     • Deduplicate
+  │                                                  │
+  └─ EXTRACT_CONTENT responses ──────────────────> ▼
+                                             Ranked results returned
+
+Storage & Data Flow Summary
+---------------------------
+
+TabMonitor → IndexingQueue → IndexingPipeline → VectorStore (IndexedDB)
+                                             ↘
+                                              EmbeddingService (WASM)
+                                              SummarizerService
+
+User Queries (sidebar search) → Background `hybridSearch`
+                                 ├─> vectorSearch (semantic) → ranked results
+                                 ├─> keywordSearch (TF-IDF) → ranked results
+                                 └─> RRF fusion → combined top-k results
+Results returned to sidebar for display (title, URL, metadata).
+
+
