@@ -169,7 +169,7 @@ export class RAGController {
 
   /**
    * Build context string from search results
-   * Formats results with titles, URLs, and content
+   * Uses a hybrid approach: page-level search, then extract best passages
    */
   private _buildContext(results: SearchResult[], maxLength: number): string {
     let context = '';
@@ -179,19 +179,24 @@ export class RAGController {
       const result = results[i];
       const page = result.page;
 
-      // Format: [Source N] Title (domain) - summary/content
+      // Format: [Source N] Title (domain)
       const sourceHeader = `[Source ${i + 1}] ${page.title}\n`;
       const sourceUrl = `URL: ${page.url}\n`;
-      const sourceContent = `${page.summary || page.content}\n\n`;
+
+      // Extract best passages from the page
+      const passages = this._extractBestPassages(page, result);
+      const sourceContent = passages.length > 0
+        ? passages.join('\n\n') + '\n\n'
+        : `${page.summary || page.content.substring(0, 500)}\n\n`;
 
       const fullSource = sourceHeader + sourceUrl + sourceContent;
 
       // Check if adding this source would exceed max length
       if (currentLength + fullSource.length > maxLength) {
-        // Try to fit a truncated version
+        // Try to fit at least the header and URL with one truncated passage
         const remainingSpace = maxLength - currentLength - sourceHeader.length - sourceUrl.length;
         if (remainingSpace > 200) {
-          const truncatedContent = (page.summary || page.content).substring(0, remainingSpace - 20) + '...\n\n';
+          const truncatedContent = sourceContent.substring(0, remainingSpace - 20) + '...\n\n';
           context += sourceHeader + sourceUrl + truncatedContent;
         }
         break;
@@ -202,6 +207,32 @@ export class RAGController {
     }
 
     return context;
+  }
+
+  /**
+   * Extract the best passages from a page for RAG context
+   * Prioritizes passages with high quality scores and reasonable length
+   * Returns top 2-3 most relevant passages per page
+   */
+  private _extractBestPassages(page: any, _searchResult: SearchResult): string[] {
+    // If no passages, return empty array (will fall back to summary/content)
+    if (!page.passages || page.passages.length === 0) {
+      return [];
+    }
+
+    // Sort passages by quality score (descending)
+    const sortedPassages = [...page.passages].sort((a, b) => b.quality - a.quality);
+
+    // Take top 3 passages, prioritizing those with good quality and length
+    const selectedPassages = sortedPassages
+      .filter((passage) => {
+        // Filter out very short passages (likely navigation/boilerplate)
+        return passage.wordCount >= 20 && passage.quality > 0.3;
+      })
+      .slice(0, 3) // Top 3 passages
+      .map((passage) => passage.text.trim());
+
+    return selectedPassages;
   }
 
   /**
