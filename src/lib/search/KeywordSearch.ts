@@ -4,48 +4,12 @@
 
 import type { KeywordSearchResult } from './types';
 import { vectorStore } from '../storage/VectorStore';
+import { tokenize, isExactPhraseMatch, extractDomain } from '../utils/textProcessing';
+import { TEXT_PROCESSING } from '../constants/contentSelectors';
+import { loggers } from '../utils/logger';
+import { globalCaches, cacheKeys } from '../utils/cache';
 
-/**
- * Common stop words to filter out
- */
-const STOP_WORDS = new Set([
-  'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-  'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'been',
-  'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-  'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'it',
-  'its', 'if', 'then', 'than', 'so', 'just', 'about', 'into', 'through',
-  'during', 'before', 'after', 'above', 'below', 'between', 'under', 'over',
-  'not', 'no', 'yes', 'all', 'any', 'both', 'each', 'few', 'more', 'most',
-  'some', 'such', 'only', 'own', 'same', 'other', 'also', 'when', 'where',
-  'who', 'which', 'what', 'how', 'why', 'there', 'here', 'out', 'up', 'down',
-]);
-
-/**
- * Field weights for TF-IDF scoring
- */
-const FIELD_WEIGHTS = {
-  title: 3.0,
-  summary: 2.0,
-  url: 1.5,
-  content: 1.0,
-};
-
-/**
- * Maximum content length to scan (for performance)
- */
-const MAX_CONTENT_LENGTH = 2000;
-
-/**
- * Tokenize text into terms
- */
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ') // Replace non-alphanumeric with spaces
-    .split(/\s+/)
-    .filter(term => term.length >= 3) // Filter short terms
-    .filter(term => !STOP_WORDS.has(term)); // Filter stop words
-}
+import { FIELD_WEIGHTS } from '../utils/textProcessing';
 
 /**
  * Calculate term frequency for a term in a document
@@ -93,27 +57,6 @@ function calculateTFIDF(
 }
 
 /**
- * Check if query is an exact phrase match in text
- */
-function isExactPhraseMatch(query: string, text: string): boolean {
-  const normalizedQuery = query.toLowerCase().trim();
-  const normalizedText = text.toLowerCase();
-  return normalizedText.includes(normalizedQuery);
-}
-
-/**
- * Extract domain from URL
- */
-function extractDomain(url: string): string {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.hostname.replace('www.', '');
-  } catch {
-    return '';
-  }
-}
-
-/**
  * KeywordSearch class for TF-IDF based keyword search
  */
 export class KeywordSearch {
@@ -127,28 +70,37 @@ export class KeywordSearch {
     query: string,
     options: { k?: number; minScore?: number } = {}
   ): Promise<KeywordSearchResult[]> {
-    const k = options.k || 10;
-    const minScore = options.minScore || 0.01;
+    return loggers.keywordSearch.timedAsync('keyword-search', async () => {
+      const k = options.k || 10;
+      const minScore = options.minScore || 0.01;
+      const cacheKey = cacheKeys.keywordSearch(query, options);
 
-    console.log('[KeywordSearch] Searching for:', query);
+      // Check cache first
+      const cached = globalCaches.queryCache.get(cacheKey);
+      if (cached) {
+        loggers.keywordSearch.debug('Cache hit for keyword search');
+        return cached;
+      }
 
-    // Tokenize query
-    const queryTerms = tokenize(query);
-    if (queryTerms.length === 0) {
-      console.log('[KeywordSearch] No valid query terms after tokenization');
-      return [];
-    }
+      loggers.keywordSearch.debug('Searching for:', query);
 
-    console.log('[KeywordSearch] Query terms:', queryTerms);
+      // Tokenize query
+      const queryTerms = tokenize(query);
+      if (queryTerms.length === 0) {
+        loggers.keywordSearch.debug('No valid query terms after tokenization');
+        return [];
+      }
 
-    // Get all pages from database
-    const pages = await vectorStore.getAllPages();
-    if (pages.length === 0) {
-      console.log('[KeywordSearch] No pages in database');
-      return [];
-    }
+      loggers.keywordSearch.debug('Query terms:', queryTerms);
 
-    console.log('[KeywordSearch] Searching across', pages.length, 'pages');
+      // Get all pages from database
+      const pages = await vectorStore.getAllPages();
+      if (pages.length === 0) {
+        loggers.keywordSearch.debug('No pages in database');
+        return [];
+      }
+
+      loggers.keywordSearch.debug('Searching across', pages.length, 'pages');
 
     // Tokenize all documents for IDF calculation
     const allDocuments: string[][] = [];
@@ -156,16 +108,18 @@ export class KeywordSearch {
 
     for (const page of pages) {
       const titleTokens = tokenize(page.title);
-      const summaryTokens = tokenize(page.summary);
+      // Create passage tokens by joining all passage texts
+      const passageTexts = page.passages?.map(p => p.text).join(' ') || '';
+      const passageTokens = tokenize(passageTexts);
       const urlTokens = tokenize(page.url);
-      const contentTokens = tokenize(page.content.substring(0, MAX_CONTENT_LENGTH));
+      const contentTokens = tokenize(page.content.substring(0, TEXT_PROCESSING.MAX_CONTENT_LENGTH));
 
-      const allTokens = [...titleTokens, ...summaryTokens, ...urlTokens, ...contentTokens];
+      const allTokens = [...titleTokens, ...passageTokens, ...urlTokens, ...contentTokens];
       allDocuments.push(allTokens);
 
       pageTokens.set(page.id, {
         title: titleTokens,
-        summary: summaryTokens,
+        summary: passageTokens, // Keep field name for compatibility
         url: urlTokens,
         content: contentTokens,
       });
@@ -191,21 +145,22 @@ export class KeywordSearch {
         continue;
       }
 
-      // Bonus: Exact phrase match in title or summary (2x boost)
+      // Bonus: Exact phrase match in title or passages (2x boost)
+      const passageTexts = page.passages?.map(p => p.text).join(' ') || '';
       if (
         isExactPhraseMatch(query, page.title) ||
-        isExactPhraseMatch(query, page.summary)
+        isExactPhraseMatch(query, passageTexts)
       ) {
         score *= 2.0;
-        console.log('[KeywordSearch] Exact phrase match bonus for:', page.title);
+        loggers.keywordSearch.debug('Exact phrase match bonus for:', page.title);
       }
 
       // Bonus: Domain match (1.5x boost)
       const pageDomain = extractDomain(page.url);
       const queryLower = query.toLowerCase();
-      if (pageDomain && queryLower.includes(pageDomain)) {
+      if (pageDomain && pageDomain.toLowerCase().includes(queryLower)) {
         score *= 1.5;
-        console.log('[KeywordSearch] Domain match bonus for:', page.url);
+        loggers.keywordSearch.debug('Domain match bonus for:', page.url);
       }
 
       // Find which terms matched
@@ -231,9 +186,13 @@ export class KeywordSearch {
     // Return top-k results
     const topResults = results.slice(0, k);
 
-    console.log('[KeywordSearch] Found', results.length, 'matches, returning top', topResults.length);
+    loggers.keywordSearch.debug('Found', results.length, 'matches, returning top', topResults.length);
 
-    return topResults;
+      // Cache the result
+      globalCaches.queryCache.set(cacheKey, topResults);
+
+      return topResults;
+    });
   }
 }
 

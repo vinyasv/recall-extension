@@ -2,38 +2,69 @@
  * ContentExtractor - Intelligently extracts main content from web pages
  */
 
+import type { Passage } from '../lib/storage/types';
+import { DocumentChunker } from './DocumentChunker';
+import { CONTENT_SELECTORS, UNWANTED_SELECTORS, CONTENT_REQUIREMENTS } from '../lib/constants/contentSelectors';
+import { cleanText, meetsMinimumRequirements } from '../lib/utils/textProcessing';
+import { loggers } from '../lib/utils/logger';
+
 export interface ExtractedContent {
   title: string;
   content: string;
   url: string;
   textLength: number;
+  passages: Passage[];
 }
 
 /**
  * ContentExtractor class for extracting meaningful content from DOM
  */
 export class ContentExtractor {
+  private static chunker = new DocumentChunker();
+
   /**
    * Extract content from the current page
    */
   static async extract(): Promise<ExtractedContent> {
-    const url = window.location.href;
-    const title = document.title || '';
+    return loggers.contentExtractor.timedAsync('content-extraction', async () => {
+      const url = window.location.href;
+      const title = document.title || '';
 
-    await this._waitForDynamicContent();
+      await this._waitForDynamicContent();
 
-    // Extract main content
-    const content = this._extractMainContent();
+      // Extract main content
+      const content = this._extractMainContent();
 
-    // Clean the content
-    const cleanedContent = this._cleanText(content);
+      // Clean the content
+      const cleanedContent = cleanText(content);
+
+      // Extract passages using DocumentChunker
+      loggers.contentExtractor.debug('Extracting passages...');
+      const passages = this.chunker.chunkDocument(document);
+
+    // If no passages found, create a fallback passage from the main content
+    if (passages.length === 0 && cleanedContent.length > CONTENT_REQUIREMENTS.MIN_CHARS) {
+      loggers.contentExtractor.warn('No passages found, creating fallback passage');
+      const fallbackPassage: Passage = {
+        id: 'passage-fallback',
+        text: cleanedContent.substring(0, 1000),
+        wordCount: Math.min(cleanedContent.substring(0, 1000).split(/\s+/).length, 200),
+        position: 0,
+        quality: 0.5,
+      };
+      passages.push(fallbackPassage);
+    }
+
+    loggers.contentExtractor.debug(`Extracted ${passages.length} passages`);
 
     return {
       title,
       content: cleanedContent,
       url,
       textLength: cleanedContent.length,
+      passages,
     };
+    });
   }
 
   /**
@@ -43,34 +74,21 @@ export class ContentExtractor {
     // Strategy 1: Look for semantic HTML5 elements
     const article = document.querySelector('article');
     if (article && this._hasSubstantialContent(article)) {
-      console.log('[ContentExtractor] Using <article> tag');
+      loggers.contentExtractor.debug('Using <article> tag');
       return this._getTextFromElement(article);
     }
 
     const main = document.querySelector('main');
     if (main && this._hasSubstantialContent(main)) {
-      console.log('[ContentExtractor] Using <main> tag');
+      loggers.contentExtractor.debug('Using <main> tag');
       return this._getTextFromElement(main);
     }
 
-    // Strategy 2: Look for elements with specific attributes/classes
-    const contentSelectors = [
-      '[role="main"]',
-      '[role="article"]',
-      '.article-content',
-      '.post-content',
-      '.entry-content',
-      '.content-body',
-      '.article-body',
-      '#content',
-      '#main-content',
-      '.main-content',
-    ];
-
-    for (const selector of contentSelectors) {
+    // Strategy 2: Use shared content selectors
+    for (const selector of CONTENT_SELECTORS) {
       const element = document.querySelector(selector);
       if (element && this._hasSubstantialContent(element)) {
-        console.log('[ContentExtractor] Using selector:', selector);
+        loggers.contentExtractor.debug('Using selector:', selector);
         return this._getTextFromElement(element);
       }
     }
@@ -79,12 +97,12 @@ export class ContentExtractor {
     const candidates = this._findContentCandidates();
     if (candidates.length > 0) {
       const best = candidates[0];
-      console.log('[ContentExtractor] Using content candidate');
+      loggers.contentExtractor.debug('Using content candidate');
       return this._getTextFromElement(best.element);
     }
 
     // Fallback: Use body but filter out navigation, headers, footers
-    console.log('[ContentExtractor] Using body with filtering');
+    loggers.contentExtractor.debug('Using body with filtering');
     return this._getTextFromBody();
   }
 
@@ -92,9 +110,7 @@ export class ContentExtractor {
    * Check if element has substantial content
    */
   private static _hasSubstantialContent(element: Element): boolean {
-    const text = element.textContent || '';
-    const trimmed = text.trim();
-    return trimmed.length > 200; // Minimum 200 characters
+    return meetsMinimumRequirements(element.textContent || '', CONTENT_REQUIREMENTS.MIN_CHARS);
   }
 
   /**
@@ -104,23 +120,8 @@ export class ContentExtractor {
     // Clone the element to avoid modifying the DOM
     const clone = element.cloneNode(true) as Element;
 
-    // Remove unwanted elements
-    const unwantedSelectors = [
-      'script',
-      'style',
-      'nav',
-      'header',
-      'footer',
-      '.advertisement',
-      '.ad',
-      '.sidebar',
-      '.comments',
-      '.related-posts',
-      '[role="navigation"]',
-      '[role="complementary"]',
-    ];
-
-    unwantedSelectors.forEach((selector) => {
+    // Remove unwanted elements using shared constants
+    UNWANTED_SELECTORS.forEach((selector) => {
       clone.querySelectorAll(selector).forEach((el) => el.remove());
     });
 
@@ -241,49 +242,15 @@ export class ContentExtractor {
   private static _getTextFromBody(): string {
     const body = document.body.cloneNode(true) as Element;
 
-    // Remove unwanted elements
-    const unwantedSelectors = [
-      'script',
-      'style',
-      'nav',
-      'header',
-      'footer',
-      '.advertisement',
-      '.ad',
-      '.sidebar',
-      '.menu',
-      '[role="navigation"]',
-      '[role="banner"]',
-      '[role="complementary"]',
-      '[role="contentinfo"]',
-    ];
-
-    unwantedSelectors.forEach((selector) => {
+    // Remove unwanted elements using shared constants
+    UNWANTED_SELECTORS.forEach((selector) => {
       body.querySelectorAll(selector).forEach((el) => el.remove());
     });
 
     return body.textContent || '';
   }
 
-  /**
-   * Clean extracted text
-   */
-  private static _cleanText(text: string): string {
-    return (
-      text
-        // Normalize whitespace
-        .replace(/\s+/g, ' ')
-        // Normalize newlines
-        .replace(/\n+/g, '\n')
-        // Remove excessive spaces around newlines
-        .replace(/ *\n */g, '\n')
-        // Trim
-        .trim()
-        // Limit length (max 10,000 characters)
-        .substring(0, 10000)
-    );
-  }
-
+  
   private static async _waitForDynamicContent(options: { minChars?: number; timeoutMs?: number } = {}): Promise<void> {
     const { minChars = 250, timeoutMs = 2500 } = options;
 

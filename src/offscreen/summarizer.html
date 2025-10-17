@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rewind AI Summarizer</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #f9fafb;
+      color: #374151;
+      font-size: 14px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .status {
+      background: white;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      margin-bottom: 10px;
+    }
+
+    .status.processing {
+      background: #fef3c7;
+      border-color: #f59e0b;
+      color: #92400e;
+    }
+
+    .status.ready {
+      background: #d1fae5;
+      border-color: #10b981;
+      color: #065f46;
+    }
+
+    .status.error {
+      background: #fee2e2;
+      border-color: #ef4444;
+      color: #991b1b;
+    }
+
+    .queue {
+      background: white;
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+    }
+
+    .queue-item {
+      padding: 4px 0;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    .queue-item:last-child {
+      border-bottom: none;
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h3>🤖 Rewind AI Summarizer</h3>
+    <div id="status" class="status">Initializing...</div>
+  </div>
+
+  <div id="queueContainer" class="queue hidden">
+    <h4>Processing Queue:</h4>
+    <div id="queueList"></div>
+  </div>
+
+  <script type="module" src="./summarizer.ts"></script>
+</body>
+</html>

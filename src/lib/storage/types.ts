@@ -3,6 +3,62 @@
  */
 
 /**
+ * Represents a semantic passage from a document
+ */
+export interface Passage {
+  /** Unique identifier within the page */
+  id: string;
+
+  /** Passage text content */
+  text: string;
+
+  /** Number of words in the passage */
+  wordCount: number;
+
+  /** Position within the document (0-based) */
+  position: number;
+
+  /** Quality score (0-1, higher is better) */
+  quality: number;
+
+  /** 384-dimensional embedding vector */
+  embedding?: Float32Array;
+
+  /** DOM element information (optional) */
+  element?: {
+    tagName: string;
+    className?: string;
+    id?: string;
+  };
+}
+
+/**
+ * Lightweight page metadata for fast search operations
+ */
+export interface PageMetadata {
+  /** Unique identifier (UUID v4) */
+  id: string;
+
+  /** Page URL */
+  url: string;
+
+  /** Page title */
+  title: string;
+
+  /** Page-level embedding (title + concatenated passages) */
+  embedding: Float32Array;
+
+  /** Visit timestamp (ms since epoch) */
+  timestamp: number;
+
+  /** Time spent on page in seconds */
+  dwellTime: number;
+
+  /** Last time this page was accessed from search results (ms since epoch) */
+  lastAccessed: number;
+}
+
+/**
  * Represents a page record in the database
  */
 export interface PageRecord {
@@ -18,10 +74,13 @@ export interface PageRecord {
   /** Raw extracted text content */
   content: string;
 
-  /** AI-generated summary */
+  /** AI-generated search-optimized summary */
   summary: string;
 
-  /** 384-dimensional embedding vector from all-MiniLM-L6-v2 */
+  /** Array of semantic passages from the page */
+  passages: Passage[];
+
+  /** Page-level embedding (title + summary + concatenated passages) */
   embedding: Float32Array;
 
   /** Visit timestamp (ms since epoch) */
@@ -74,6 +133,37 @@ export interface DatabaseConfig {
 }
 
 /**
+ * Serialized passage for IndexedDB storage
+ */
+export interface SerializedPassage {
+  id: string;
+  text: string;
+  wordCount: number;
+  position: number;
+  quality: number;
+  embedding?: ArrayBuffer;
+  element?: {
+    tagName: string;
+    className?: string;
+    id?: string;
+  };
+}
+
+/**
+ * Serialized page metadata for IndexedDB storage
+ * (Float32Array needs to be stored as ArrayBuffer)
+ */
+export interface SerializedPageMetadata {
+  id: string;
+  url: string;
+  title: string;
+  embedding: ArrayBuffer;
+  timestamp: number;
+  dwellTime: number;
+  lastAccessed: number;
+}
+
+/**
  * Serialized page record for IndexedDB storage
  * (Float32Array needs to be stored as ArrayBuffer)
  */
@@ -83,6 +173,7 @@ export interface SerializedPageRecord {
   title: string;
   content: string;
   summary: string;
+  passages: SerializedPassage[];
   embedding: ArrayBuffer;
   timestamp: number;
   dwellTime: number;

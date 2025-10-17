@@ -4,6 +4,7 @@
  */
 
 import type { QueuedPage } from './IndexingQueue';
+import type { ExtractedContent } from '../content/ContentExtractor';
 import { embeddingService } from '../lib/embeddings/EmbeddingService';
 import { summarizerService } from '../lib/summarizer/SummarizerService';
 import { vectorStore } from '../lib/storage/VectorStore';
@@ -58,33 +59,42 @@ export class IndexingPipeline {
 
       console.log('[IndexingPipeline] ✅ Content extracted:', content.textLength, 'chars, title:', content.title.substring(0, 50));
 
-      // Check minimum length
-      if (content.textLength < 100) {
-        return { success: false, error: 'Content too short (< 100 chars)' };
+      // Validate passages
+      if (!content.passages || content.passages.length === 0) {
+        return { success: false, error: 'No passages extracted from content' };
       }
 
-      // Stage 2: Generate summary
-      console.log('[IndexingPipeline] Stage 2: Generating summary...');
-      const summary = await this._generateSummary(content.content, queuedPage.url, content.title);
-      console.log('[IndexingPipeline] ✅ Summary generated:', summary.length, 'chars -', summary.substring(0, 100) + '...');
+      console.log('[IndexingPipeline] ✅ Content extracted:', content.textLength, 'chars, title:', content.title?.substring(0, 50));
+      console.log('[IndexingPipeline] Passages extracted:', content.passages.length, 'passages');
 
-      // Combine title + summary for better embedding context
-      const embeddingText = content.title ? `${content.title}. ${summary}` : summary;
-      console.log('[IndexingPipeline] Embedding text length:', embeddingText.length, 'chars');
+      // Stage 2: Generate search-optimized summary using Chrome Summarizer API
+      console.log('[IndexingPipeline] Stage 2: Generating AI summary...');
+      const summary = await this._generateSummary(content.content, content.url, content.title);
+      console.log('[IndexingPipeline] ✅ Summary generated:', summary.length, 'chars');
 
-      // Stage 3: Generate embedding
-      console.log('[IndexingPipeline] Stage 3: Generating embedding...');
-      const embedding = await this._generateEmbedding(embeddingText);
-      console.log('[IndexingPipeline] ✅ Embedding generated:', embedding.length, 'dimensions');
+      // Stage 3: Generate embeddings for passages
+      console.log('[IndexingPipeline] Stage 3: Generating passage embeddings...');
+      const passagesWithEmbeddings = await this._generatePassageEmbeddings(content.passages);
+      console.log('[IndexingPipeline] ✅ Passage embeddings generated for', passagesWithEmbeddings.length, 'passages');
 
-      // Stage 4: Store in database
-      console.log('[IndexingPipeline] Stage 4: Storing in database...');
+      // Create page-level embedding from title + summary + best passages
+      const pageEmbeddingText = this._createPageEmbeddingText(content.title, summary, passagesWithEmbeddings);
+      console.log('[IndexingPipeline] Page embedding text length:', pageEmbeddingText.length, 'chars');
+
+      // Stage 4: Generate page-level embedding
+      console.log('[IndexingPipeline] Stage 4: Generating page-level embedding...');
+      const pageEmbedding = await this._generateEmbedding(pageEmbeddingText);
+      console.log('[IndexingPipeline] ✅ Page embedding generated:', pageEmbedding.length, 'dimensions');
+
+      // Stage 5: Store in database
+      console.log('[IndexingPipeline] Stage 5: Storing in database...');
       const pageId = await this._storePage({
         url: queuedPage.url,
         title: content.title,
         content: content.content,
         summary,
-        embedding,
+        passages: passagesWithEmbeddings,
+        embedding: pageEmbedding,
         timestamp: queuedPage.startTime,
         dwellTime: queuedPage.dwellTime,
       });
@@ -107,8 +117,10 @@ export class IndexingPipeline {
   private async _extractContent(
     tabId: number,
     expectedUrl: string
-  ): Promise<{ title: string; content: string; textLength: number } | null> {
+  ): Promise<ExtractedContent | null> {
     try {
+      console.log('[IndexingPipeline] Extracting content from tab:', tabId, 'URL:', expectedUrl);
+
       // Check if tab still exists
       const tab = await chrome.tabs.get(tabId).catch(() => null);
       if (!tab) {
@@ -116,12 +128,14 @@ export class IndexingPipeline {
         return null;
       }
 
+      console.log('[IndexingPipeline] Tab exists, current URL:', tab.url);
+
       // IMPORTANT: Validate the tab URL matches what we expect
       // This prevents race conditions when user switches tabs/navigates
       const currentUrl = tab.url || '';
       const normalizedExpected = this._normalizeUrl(expectedUrl);
       const normalizedCurrent = this._normalizeUrl(currentUrl);
-      
+
       if (normalizedExpected !== normalizedCurrent) {
         console.warn(
           '[IndexingPipeline] Tab URL mismatch - race condition detected!',
@@ -133,70 +147,148 @@ export class IndexingPipeline {
       }
 
       // Send message to content script to extract content
-      const response = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_CONTENT' });
-
-      if (response.success && response.data) {
-        // Double-check: validate the extracted URL matches expected
-        if (response.data.url) {
-          const extractedNormalized = this._normalizeUrl(response.data.url);
-          if (extractedNormalized !== normalizedExpected) {
-            console.warn(
-              '[IndexingPipeline] Extracted URL mismatch - race condition!',
-              '\n  Expected:', expectedUrl,
-              '\n  Extracted:', response.data.url,
-              '\n  → Aborting'
-            );
-            return null;
-          }
+      // Wrap in try-catch to handle connection errors gracefully
+      console.log('[IndexingPipeline] Sending EXTRACT_CONTENT message to tab:', tabId);
+      let response;
+      try {
+        response = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_CONTENT' });
+        console.log('[IndexingPipeline] Received response from content script');
+      } catch (sendError: any) {
+        // If we get a connection error, it means content script isn't loaded yet
+        if (sendError.message?.includes('Could not establish connection') ||
+            sendError.message?.includes('Receiving end does not exist')) {
+          console.warn('[IndexingPipeline] Content script not loaded on this tab');
+          console.warn('[IndexingPipeline] This happens for tabs that were open before extension reload');
+          console.warn('[IndexingPipeline] → The page needs to be refreshed to load the content script');
+          throw new Error('Content script not loaded');
         }
-        
-        return response.data;
-      } else {
-        throw new Error(response.error || 'Content extraction failed');
+        throw sendError;
       }
+
+      // Validate response format
+      if (!response) {
+        console.warn('[IndexingPipeline] No response from content script');
+        throw new Error('No response from content script');
+      }
+
+      if (!response.success) {
+        const errorMsg = response.error || 'Content extraction failed';
+        console.warn('[IndexingPipeline] Content script reported failure:', errorMsg);
+        throw new Error(errorMsg);
+      }
+
+      if (!response.data) {
+        console.warn('[IndexingPipeline] Content script returned success but no data');
+        throw new Error('Content script returned success but no data');
+      }
+
+      // Double-check: validate the extracted URL matches expected
+      if (response.data.url) {
+        const extractedNormalized = this._normalizeUrl(response.data.url);
+        if (extractedNormalized !== normalizedExpected) {
+          console.warn(
+            '[IndexingPipeline] Extracted URL mismatch - race condition!',
+            '\n  Expected:', expectedUrl,
+            '\n  Extracted:', response.data.url,
+            '\n  → Aborting'
+          );
+          return null;
+        }
+      }
+
+      return response.data;
     } catch (error) {
       console.error('[IndexingPipeline] Content extraction error:', error);
 
-      // If content script is not loaded, try to inject it
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          files: ['content.js'],
-        });
-
-        // Wait a moment for the script to initialize
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        // Try again
-        const response = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_CONTENT' });
-
-        if (response.success && response.data) {
-          return response.data;
-        }
-      } catch (injectionError) {
-        console.error('[IndexingPipeline] Content script injection failed:', injectionError);
-      }
+      // With CRXJS and ES modules, we cannot dynamically inject content scripts
+      // Content scripts are automatically injected via manifest.json for all pages
+      // If the content script is not responding, the page may have been navigated away
+      // or the content script failed to load on that particular page
+      console.warn('[IndexingPipeline] Content script not responding. This may happen if:');
+      console.warn('  1. The tab was closed or navigated away');
+      console.warn('  2. The page is a restricted URL (chrome://, chrome-extension://, etc.)');
+      console.warn('  3. The page loaded before the extension was installed');
+      console.warn('  → Skipping this page. Content scripts will be available after page reload.');
 
       return null;
     }
   }
 
   /**
-   * Generate summary from content
+   * Generate embeddings for passages (batch processing)
+   * CRITICAL: All passages must have embeddings - will fail if any embedding generation fails
    */
-  private async _generateSummary(content: string, url: string, title: string): Promise<string> {
-    try {
-      const summary = await summarizerService.summarizeForSearch(content, url, title, 800);
-      return summary;
-    } catch (error) {
-      console.error('[IndexingPipeline] Summarization failed:', error);
-      // Fallback: use first 800 characters
-      return content.substring(0, 800);
+  private async _generatePassageEmbeddings(passages: any[]): Promise<any[]> {
+    const batchSize = 5; // Process 5 passages at a time
+    const passagesWithEmbeddings: any[] = [];
+
+    for (let i = 0; i < passages.length; i += batchSize) {
+      const batch = passages.slice(i, i + batchSize);
+      console.log(`[IndexingPipeline] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(passages.length / batchSize)}`);
+
+      // Generate embeddings for the batch
+      // If this fails, we want the entire indexing job to fail (no silent fallback)
+      const batchPromises = batch.map(async (passage) => {
+        const embedding = await this._generateEmbedding(passage.text);
+        return {
+          ...passage,
+          embedding,
+        };
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      passagesWithEmbeddings.push(...batchResults);
     }
+
+    // Validate that all passages have embeddings
+    const missingEmbeddings = passagesWithEmbeddings.filter(p => !p.embedding);
+    if (missingEmbeddings.length > 0) {
+      throw new Error(`${missingEmbeddings.length} passages are missing embeddings - indexing failed`);
+    }
+
+    return passagesWithEmbeddings;
   }
 
   /**
-   * Generate embedding from summary
+   * Create page-level embedding text from title, summary and best passages
+   */
+  private _createPageEmbeddingText(title: string, summary: string, passages: any[]): string {
+    // Sort passages by quality and take the best ones
+    const sortedPassages = passages
+      .filter(p => p.quality > 0.3) // Filter out low-quality passages
+      .sort((a, b) => b.quality - a.quality)
+      .slice(0, 3); // Take top 3 passages (reduced since we have summary)
+
+    const passageTexts = sortedPassages.map(p => p.text).join(' ');
+
+    // Combine title, summary, and passages for optimal search embedding
+    const parts = [];
+    if (title) parts.push(title);
+    if (summary && summary.length > 50) parts.push(summary);
+    if (passageTexts) parts.push(passageTexts);
+
+    return parts.join('. ');
+  }
+
+  /**
+   * Generate search-optimized summary using Chrome Summarizer API
+   * CRITICAL: This is a mandatory step - indexing will fail if summarization fails
+   */
+  private async _generateSummary(content: string, url: string, title: string): Promise<string> {
+    console.log('[IndexingPipeline] 🤖 Attempting Chrome AI summarization (REQUIRED)...');
+
+    const summary = await summarizerService.summarizeForSearch(content, url, title, 800);
+
+    if (!summary || summary.length === 0) {
+      throw new Error('Chrome Summarizer API failed - empty summary returned. Chrome 138+ with Gemini Nano is required.');
+    }
+
+    console.log('[IndexingPipeline] ✅ Chrome AI summary successful:', summary.length, 'chars');
+    return summary;
+  }
+
+  /**
+   * Generate embedding from text
    */
   private async _generateEmbedding(text: string): Promise<Float32Array> {
     return await embeddingService.generateEmbedding(text);
@@ -219,43 +311,89 @@ export class IndexingPipeline {
   }
 
   /**
-   * Store page in database
+   * Store page in database and notify UI of new content
    */
   private async _storePage(data: {
     url: string;
     title: string;
     content: string;
     summary: string;
+    passages: any[];
     embedding: Float32Array;
     timestamp: number;
     dwellTime: number;
   }): Promise<string> {
     // Check if page already exists
     const existing = await vectorStore.getPageByUrl(data.url);
+    let pageId: string;
+    let isUpdate = false;
+
     if (existing) {
       // Update existing page
       await vectorStore.updatePage(existing.id, {
         title: data.title,
         content: data.content,
         summary: data.summary,
+        passages: data.passages,
         embedding: data.embedding,
         timestamp: data.timestamp,
         dwellTime: data.dwellTime,
       });
-      return existing.id;
+      pageId = existing.id;
+      isUpdate = true;
     } else {
       // Add new page
-      return await vectorStore.addPage({
+      pageId = await vectorStore.addPage({
         url: data.url,
         title: data.title,
         content: data.content,
         summary: data.summary,
+        passages: data.passages,
         embedding: data.embedding,
         timestamp: data.timestamp,
         dwellTime: data.dwellTime,
         lastAccessed: 0,
       });
     }
+
+    // Broadcast to all tabs that a page has been indexed
+    // This allows the sidebar UI to update in real-time
+    this._broadcastPageIndexed({
+      id: pageId,
+      url: data.url,
+      title: data.title,
+      timestamp: data.timestamp,
+      isUpdate,
+    });
+
+    return pageId;
+  }
+
+  /**
+   * Broadcast page indexed event to all tabs
+   */
+  private _broadcastPageIndexed(pageInfo: {
+    id: string;
+    url: string;
+    title: string;
+    timestamp: number;
+    isUpdate: boolean;
+  }): void {
+    // Query all tabs and send the message
+    chrome.tabs.query({}, (tabs) => {
+      tabs.forEach((tab) => {
+        if (tab.id) {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'PAGE_INDEXED',
+            data: pageInfo,
+          }).catch(() => {
+            // Silently ignore errors (tab may not have content script loaded)
+          });
+        }
+      });
+    });
+
+    console.log('[IndexingPipeline] 📢 Broadcast PAGE_INDEXED:', pageInfo.title);
   }
 
   /**

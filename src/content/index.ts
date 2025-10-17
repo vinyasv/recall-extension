@@ -32,18 +32,26 @@ setTimeout(() => {
  */
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'EXTRACT_CONTENT') {
-    try {
-      (async () => {
+    // Handle async extraction properly
+    (async () => {
+      try {
+        console.log('[Memex] Extracting content for:', window.location.href);
         const data = await ContentExtractor.extract();
+        console.log('[Memex] Content extraction successful:', data.textLength, 'chars');
         sendResponse({ success: true, data });
-      })();
-    } catch (error) {
-      console.error('[Memex] Failed to extract content:', error);
-      sendResponse({ success: false, error: (error as Error).message });
-    }
+      } catch (error) {
+        console.error('[Memex] Failed to extract content:', error);
+        sendResponse({ success: false, error: (error as Error).message });
+      }
+    })();
+
+    return true; // MUST return true to keep message channel open for async response
   }
 
-  return true; // Keep message channel open
+  // Note: TOGGLE_SIDEBAR is handled by sidebar.ts message listener
+  // This handler is kept for backward compatibility but sidebar.ts should handle it
+
+  return false; // Default
 });
 
 // Notify background that content script is ready

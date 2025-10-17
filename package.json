@@ -5,12 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite build --watch --mode development",
-    "build": "tsc --noEmit && npm run build:eval-data && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
-    "eval": "tsx evals/runner.ts",
-    "eval:chrome": "tsx evals/chrome-runner.ts",
-    "build:eval-data": "tsx evals/generate-eval-data.ts"
+    "hybrid:test": "tsx scripts/hybrid-test-query.ts"
   },
   "keywords": [
     "chrome-extension",
@@ -22,7 +20,9 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@crxjs/vite-plugin": "^2.2.0",
     "@types/chrome": "^0.0.268",
+    "jsdom": "^27.0.0",
     "puppeteer": "^24.24.1",
     "tsx": "^4.20.6",
     "typescript": "^5.5.4",

@@ -536,6 +536,37 @@ export function closeSidebar(): void {
 }
 
 /**
+ * Handle PAGE_INDEXED message for real-time updates
+ */
+let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+function handlePageIndexed(pageInfo: { id: string; url: string; title: string; timestamp: number; isUpdate: boolean }): void {
+  console.log('[Rewind Sidebar] Page indexed:', pageInfo.title, pageInfo.isUpdate ? '(updated)' : '(new)');
+
+  // Only refresh if sidebar is open
+  if (!sidebarOpen) {
+    console.log('[Rewind Sidebar] Sidebar not open, skipping refresh');
+    return;
+  }
+
+  // Check if user is actively searching
+  const searchInput = sidebarContainer?.querySelector('#rewindSearchInput') as HTMLInputElement;
+  if (searchInput && searchInput.value.trim()) {
+    console.log('[Rewind Sidebar] Active search in progress, skipping refresh to preserve results');
+    return;
+  }
+
+  // Debounce rapid updates (if multiple pages indexed quickly)
+  if (refreshTimeout) {
+    clearTimeout(refreshTimeout);
+  }
+
+  refreshTimeout = setTimeout(() => {
+    console.log('[Rewind Sidebar] Refreshing sidebar with latest data...');
+    loadAllHistory();
+  }, 1000); // Wait 1 second after last update
+}
+
+/**
  * Toggle sidebar
  */
 export function toggleSidebar(): void {
@@ -765,8 +796,9 @@ function escapeHtml(text: string): string {
 // Listen for keyboard shortcut
 document.addEventListener('keydown', (e) => {
   // Cmd/Ctrl + Shift + E to toggle sidebar
-  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'E') {
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'e') {
     e.preventDefault();
+    console.log('[Rewind Sidebar] Keyboard shortcut triggered:', e.key);
     toggleSidebar();
   }
 });
@@ -776,6 +808,10 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'TOGGLE_SIDEBAR') {
       toggleSidebar();
+      sendResponse({ success: true });
+    } else if (message.type === 'PAGE_INDEXED') {
+      // Real-time update when a new page is indexed
+      handlePageIndexed(message.data);
       sendResponse({ success: true });
     }
     return true;

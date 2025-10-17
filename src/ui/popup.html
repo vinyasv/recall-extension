@@ -6,26 +6,404 @@
   <title>Rewind</title>
   <style>
     body {
-      width: 200px;
-      height: 100px;
+      width: 300px;
       margin: 0;
-      padding: 20px;
+      padding: 16px;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #fff;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .header h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .main-content {
+      margin-bottom: 16px;
+    }
+
+    .button {
+      width: 100%;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .button-primary {
+      background: #667eea;
+      color: white;
+    }
+
+    .button-primary:hover {
+      background: #5568d3;
+    }
+
+    .button-secondary {
+      background: #f3f4f6;
+      color: #374151;
+      border: 1px solid #d1d5db;
+    }
+
+    .button-secondary:hover {
+      background: #e5e7eb;
+    }
+
+    .button-danger {
+      background: #ef4444;
+      color: white;
+    }
+
+    .button-danger:hover {
+      background: #dc2626;
+    }
+
+    .button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .testing-section {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e5e5e5;
+    }
+
+    .testing-section h4 {
+      margin: 0 0 12px 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      max-height: 400px;
+      overflow-y: auto;
+      position: relative;
+      line-height: 1.4;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      min-height: 100px;
+    }
+
+  
+    .status-display:empty {
+      display: none;
+    }
+
+    .status.error {
+      background: #fee2e2;
+      border: 1px solid #ef4444;
+      color: #991b1b;
+      font-weight: 600;
+    }
+
+    .status .clear-status {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: rgba(0,0,0,0.15);
+      border: none;
+      border-radius: 3px;
+      color: #666;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      padding: 4px 6px;
+      opacity: 0.6;
+      transition: all 0.2s;
+      min-width: 20px;
+      height: 20px;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #fff;
     }
-    
+
+    .status .clear-status:hover {
+      opacity: 1;
+      background: rgba(0,0,0,0.25);
+      transform: scale(1.1);
+    }
+
+    .status.success {
+      background: #d1fae5;
+      border: 1px solid #10b981;
+      color: #065f46;
+    }
+
+    .status.error {
+      background: #fee2e2;
+      border: 1px solid #ef4444;
+      color: #991b1b;
+    }
+
+    .status.info {
+      background: #dbeafe;
+      border: 1px solid #3b82f6;
+      color: #1e40af;
+    }
+
     .loading {
       text-align: center;
       color: #666;
       font-size: 12px;
     }
-  </style>
+
+    .chrome-ai-status {
+      margin-top: 12px;
+      padding: 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      background: #f9fafb;
+    }
+
+    .status-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .status-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #374151;
+    }
+
+    .status-badge {
+      font-size: 9px;
+      padding: 2px 6px;
+      border-radius: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-badge.available {
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid #10b981;
+    }
+
+    .status-badge.unavailable {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #ef4444;
+    }
+
+    .status-badge.checking {
+      background: #fef3c7;
+      color: #92400e;
+      border: 1px solid #f59e0b;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .status-details {
+      font-size: 10px;
+      color: #6b7280;
+      line-height: 1.3;
+      margin-top: 4px;
+    }
+
+    .ai-metrics {
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+      border-radius: 4px;
+      padding: 8px;
+      font-size: 10px;
+    }
+
+    .ai-metrics .status-value.chrome-ai {
+      color: #059669;
+    }
+
+    .ai-metrics .status-value.fallback {
+      color: #d97706;
+    }
+
+    .test-group {
+      margin-bottom: 16px;
+      padding: 8px;
+      border: 1px solid #f3f4f6;
+      border-radius: 4px;
+      background: #fafafa;
+    }
+
+    .test-group h5 {
+      margin: 0 0 8px 0;
+      font-size: 11px;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .pipeline-status {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      padding: 8px;
+      font-size: 10px;
+    }
+
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 2px 0;
+    }
+
+    .status-label {
+      font-weight: 500;
+      color: #374151;
+    }
+
+    .status-value {
+      font-weight: 600;
+      text-align: right;
+    }
+
+    .status-value.active {
+      color: #059669;
+    }
+
+    .status-value.idle {
+      color: #6b7280;
+    }
+
+    .status-value.processing {
+      color: #d97706;
+    }
+
+    .status-value.error {
+      color: #dc2626;
+    }
+
+    .status-value.checking {
+      color: #2563eb;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    </style>
 </head>
 <body>
-  <div class="loading">Opening Rewind...</div>
+  <div class="header">
+    <h3>🧠 Rewind</h3>
+  </div>
+
+  <div class="main-content">
+    <button id="toggleSidebar" class="button button-primary">Open Sidebar (⌘⇧E)</button>
+    <button id="showStats" class="button button-secondary">📊 Show Stats</button>
+
+    <!-- Chrome AI Status Indicator -->
+    <div id="chromeAiStatus" class="chrome-ai-status">
+      <div class="status-header">
+        <span class="status-title">🤖 Chrome AI Status</span>
+        <span id="aiStatusBadge" class="status-badge checking">Checking...</span>
+      </div>
+      <div id="aiStatusDetails" class="status-details"></div>
+    </div>
+  </div>
+
+  <div class="testing-section">
+    <h4>Testing Controls</h4>
+
+    <!-- AI/ML Testing -->
+    <div class="test-group">
+      <h5>🤖 AI & ML</h5>
+      <button id="testAI" class="button button-secondary">Test AI Summarizer</button>
+      <button id="testEmbeddings" class="button button-secondary">Test Embeddings</button>
+    </div>
+
+    <!-- Search Testing -->
+    <div class="test-group">
+      <h5>🔍 Search Performance</h5>
+      <button id="testSearch" class="button button-secondary">Search Metrics Test</button>
+      <button id="testHybridSearch" class="button button-secondary">Test Hybrid Search</button>
+    </div>
+
+    <!-- Data Management -->
+    <div class="test-group">
+      <h5>📊 Data Management</h5>
+      <button id="addTestData" class="button button-secondary">Add Test Data</button>
+      <button id="clearData" class="button button-danger">Clear All Data</button>
+    </div>
+
+    <!-- Pipeline Status -->
+    <div class="test-group">
+      <h5>⚙️ Pipeline Status</h5>
+      <div id="pipelineStatus" class="pipeline-status">
+        <div class="status-item">
+          <span class="status-label">Indexing:</span>
+          <span id="indexingStatus" class="status-value checking">Checking...</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Queue Size:</span>
+          <span id="queueSize" class="status-value">-</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Last Processed:</span>
+          <span id="lastProcessed" class="status-value">-</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Summarization Metrics -->
+    <div class="test-group">
+      <h5>🤖 AI Summarization Metrics</h5>
+      <div id="aiMetrics" class="ai-metrics">
+        <div class="status-item">
+          <span class="status-label">Total Summaries:</span>
+          <span id="totalSummaries" class="status-value">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Success Rate:</span>
+          <span id="summarySuccessRate" class="status-value">-</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Avg Time:</span>
+          <span id="avgSummaryTime" class="status-value">-</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">API Type:</span>
+          <span id="apiType" class="status-value checking">Checking...</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Last Summary:</span>
+          <span id="lastSummaryTime" class="status-value">-</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Display -->
+    <div id="status" class="status-display"></div>
+  </div>
+
   <script type="module" src="./popup.js"></script>
 </body>
 </html>

@@ -3,14 +3,12 @@
  */
 
 import type { SearchResult, SearchOptions, SearchMode } from './types';
-import { vectorSearch } from './VectorSearch';
+import { searchSimilar } from './VectorSearch';
 import { keywordSearch } from './KeywordSearch';
 import { embeddingService } from '../embeddings/EmbeddingService';
-
-/**
- * RRF constant (from research, k=60 is standard)
- */
-const RRF_K = 60;
+import { RRF_CONFIG } from '../config/searchConfig';
+import { loggers } from '../utils/logger';
+import { globalCaches, cacheKeys } from '../utils/cache';
 
 /**
  * Default search options
@@ -31,7 +29,7 @@ const DEFAULT_OPTIONS: Required<Pick<SearchOptions, 'k' | 'mode'>> = {
  */
 function reciprocalRankFusion(
   rankedLists: SearchResult[][],
-  k: number = RRF_K
+  k: number = RRF_CONFIG.K
 ): SearchResult[] {
   const scoreMap = new Map<string, SearchResult>();
 
@@ -73,16 +71,25 @@ export class HybridSearch {
    * @returns Array of search results sorted by relevance
    */
   async search(query: string, options: SearchOptions = {}): Promise<SearchResult[]> {
-    const opts = { ...DEFAULT_OPTIONS, ...options };
-    const mode = opts.mode || 'hybrid';
+    return loggers.hybridSearch.timedAsync('hybrid-search', async () => {
+      const opts = { ...DEFAULT_OPTIONS, ...options };
+      const mode = opts.mode || 'hybrid';
+      const cacheKey = cacheKeys.searchQuery(query, opts);
 
-    console.log('[HybridSearch] Searching with mode:', mode, 'query:', query);
+      // Check cache first
+      const cached = globalCaches.queryCache.get(cacheKey);
+      if (cached) {
+        loggers.hybridSearch.debug('Cache hit for hybrid search');
+        return cached;
+      }
 
-    // Semantic-only mode
-    if (mode === 'semantic') {
-      console.log('[HybridSearch] Running semantic search only');
-      const queryEmbedding = await embeddingService.generateEmbedding(query);
-      const results = await vectorSearch.search(queryEmbedding, options);
+      loggers.hybridSearch.debug('Searching with mode:', mode, 'query:', query);
+
+      // Semantic-only mode
+      if (mode === 'semantic') {
+        loggers.hybridSearch.debug('Running semantic search only');
+        const queryEmbedding = await embeddingService.generateEmbedding(query);
+        const results = await searchSimilar(queryEmbedding, options);
 
       // Add searchMode metadata
       return results.map(r => ({
@@ -93,7 +100,7 @@ export class HybridSearch {
 
     // Keyword-only mode
     if (mode === 'keyword') {
-      console.log('[HybridSearch] Running keyword search only');
+      loggers.hybridSearch.debug('Running keyword search only');
       const keywordResults = await keywordSearch.search(query, { k: opts.k });
 
       // Convert to SearchResult format
@@ -108,20 +115,20 @@ export class HybridSearch {
     }
 
     // Hybrid mode: Run both searches in parallel and combine with RRF
-    console.log('[HybridSearch] Running hybrid search (semantic + keyword + RRF)');
+    loggers.hybridSearch.debug('Running hybrid search (semantic + keyword + RRF)');
 
     const [queryEmbedding, keywordResults] = await Promise.all([
       embeddingService.generateEmbedding(query),
-      keywordSearch.search(query, { k: opts.k * 2 }), // Get more results for better fusion
+      keywordSearch.search(query, { k: opts.k * RRF_CONFIG.SEARCH_MULTIPLIER }),
     ]);
 
-    const semanticResults = await vectorSearch.search(queryEmbedding, {
+    const semanticResults = await searchSimilar(queryEmbedding, {
       ...options,
-      k: opts.k * 2, // Get more results for better fusion
+      k: opts.k * RRF_CONFIG.SEARCH_MULTIPLIER,
     });
 
-    console.log('[HybridSearch] Semantic results:', semanticResults.length);
-    console.log('[HybridSearch] Keyword results:', keywordResults.length);
+    loggers.hybridSearch.debug('Semantic results:', semanticResults.length);
+    loggers.hybridSearch.debug('Keyword results:', keywordResults.length);
 
     // Convert keyword results to SearchResult format for RRF
     const keywordAsSearchResults: SearchResult[] = keywordResults.map(kr => ({
@@ -152,9 +159,13 @@ export class HybridSearch {
     // Return top-k results
     const topResults = enrichedResults.slice(0, opts.k);
 
-    console.log('[HybridSearch] RRF fusion complete, returning top', topResults.length, 'results');
+    loggers.hybridSearch.debug('RRF fusion complete, returning top', topResults.length, 'results');
 
-    return topResults;
+      // Cache the result
+      globalCaches.queryCache.set(cacheKey, topResults);
+
+      return topResults;
+    });
   }
 }
 

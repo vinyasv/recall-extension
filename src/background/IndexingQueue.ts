@@ -56,23 +56,14 @@ export class IndexingQueue {
     const existingIndex = this.queue.findIndex((item) => item.url === tabInfo.url);
     if (existingIndex !== -1) {
       const existing = this.queue[existingIndex];
-
-      if (existing.attempts >= MAX_ATTEMPTS) {
-        console.warn(
-          '[IndexingQueue] Page previously failed max times, resetting and requeueing:',
-          tabInfo.url
-        );
-        this.queue.splice(existingIndex, 1);
-      } else {
-        console.log(
-          '[IndexingQueue] Page already in queue:',
-          tabInfo.url,
-          '(attempts:',
-          existing.attempts,
-          ')'
-        );
-        return;
-      }
+      console.log(
+        '[IndexingQueue] Page already in queue:',
+        tabInfo.url,
+        '(attempts:',
+        existing.attempts,
+        ')'
+      );
+      return;
     }
 
     const queuedPage: QueuedPage = {
@@ -106,21 +97,16 @@ export class IndexingQueue {
 
     if (eligible.length === 0) {
       if (this.queue.length > 0) {
-        console.warn('[IndexingQueue] All items exceeded max attempts. Resetting attempts...');
+        console.warn('[IndexingQueue] All items exceeded max attempts. Clearing failed items...');
         this.queue.forEach((item) => {
           console.warn(`  - ${item.url}: attempts=${item.attempts}, lastError=${item.lastError}`);
-          item.attempts = 0;
         });
+        // Clear all failed items instead of resetting attempts
+        this.queue = [];
         await this._saveQueue();
-
-        eligible = this.queue.filter((page) => page.attempts < MAX_ATTEMPTS);
-        console.log('[IndexingQueue] Attempts reset. Eligible items:', eligible.length);
-        if (eligible.length === 0) {
-          return null;
-        }
-      } else {
-        return null;
+        console.log('[IndexingQueue] Queue cleared of failed items');
       }
+      return null;
     }
 
     // Return the oldest queued page
@@ -143,19 +129,46 @@ export class IndexingQueue {
 
   /**
    * Mark a page as failed and increment attempt count
+   * Permanently removes pages with unrecoverable errors
    */
   async markFailed(pageId: string, error: string): Promise<void> {
-    const page = this.queue.find((p) => p.id === pageId);
-    if (page) {
-      page.attempts++;
-      page.lastError = error;
+    const index = this.queue.findIndex((p) => p.id === pageId);
+    if (index === -1) return;
 
-      if (page.attempts >= MAX_ATTEMPTS) {
-        console.error('[IndexingQueue] Max attempts reached for:', page.url);
-      }
+    const page = this.queue[index];
 
+    // Check if this is an unrecoverable error
+    const unrecoverableErrors = [
+      'Tab no longer exists',
+      'Tab URL mismatch',
+      'race condition',
+      'Content script not loaded',
+      'tab was closed',
+      'navigated away',
+    ];
+
+    const isUnrecoverable = unrecoverableErrors.some((pattern) =>
+      error.toLowerCase().includes(pattern.toLowerCase())
+    );
+
+    if (isUnrecoverable) {
+      // Permanently remove from queue - no retry
+      this.queue.splice(index, 1);
       await this._saveQueue();
+      console.warn('[IndexingQueue] Permanently removed (unrecoverable error):', page.url);
+      console.warn('[IndexingQueue]   Error:', error);
+      return;
     }
+
+    // For recoverable errors, increment attempt count
+    page.attempts++;
+    page.lastError = error;
+
+    if (page.attempts >= MAX_ATTEMPTS) {
+      console.error('[IndexingQueue] Max attempts reached for:', page.url);
+    }
+
+    await this._saveQueue();
   }
 
   /**

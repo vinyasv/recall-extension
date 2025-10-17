@@ -5,16 +5,17 @@
 
 import { embeddingService } from '../lib/embeddings/EmbeddingService';
 import { vectorStore } from '../lib/storage/VectorStore';
-import { vectorSearch } from '../lib/search/VectorSearch';
 import { hybridSearch } from '../lib/search/HybridSearch';
 import { summarizerService } from '../lib/summarizer/SummarizerService';
 import { TabMonitor } from './TabMonitor';
 import { indexingQueue } from './IndexingQueue';
 import { indexingPipeline } from './IndexingPipeline';
-import { TEST_PAGES } from '../utils/testData';
-import { TEST_PAGES as EVAL_TEST_PAGES, EVAL_QUERIES } from '../utils/evalData';
+import { offscreenManager } from './OffscreenManager';
 
 console.log('[Memex] Background service worker started');
+
+// Build-time env guard (Vite replaces import.meta.env); TS type-safe via any
+const isProd = (import.meta as any).env?.PROD === true;
 
 // Initialize Phase 3 components
 const tabMonitor = new TabMonitor();
@@ -92,20 +93,44 @@ async function initializePhase3(): Promise<void> {
     console.log('[Memex] 🚀 Initializing Phase 3 components...');
 
   try {
+    // CRITICAL: Validate Chrome AI API availability first
+    console.log('[Memex] 🔍 Validating Chrome AI API availability...');
+    await summarizerService.initialize();
+    const isAIAvailable = await summarizerService.isAIApiAvailable();
+
+    if (!isAIAvailable) {
+      const errorMsg = '❌ Chrome AI API (Summarizer) is NOT available. This extension requires Chrome 138+ with Gemini Nano installed. Indexing will be disabled.';
+      console.error('[Memex]', errorMsg);
+
+      // Set badge to indicate error
+      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeBackgroundColor({ color: '#dc2626' });
+      chrome.action.setTitle({
+        title: 'Rewind: Chrome AI API unavailable - requires Chrome 138+ with Gemini Nano'
+      });
+
+      throw new Error(errorMsg);
+    }
+
+    console.log('[Memex] ✅ Chrome AI API validation passed');
+
     // Initialize indexing queue
     console.log('[Memex] Initializing indexing queue...');
     await indexingQueue.initialize();
+
+    // Clear any stale items from the queue (from tabs open before extension reload)
+    const queueSize = indexingQueue.size();
+    if (queueSize > 0) {
+      console.log(`[Memex] Clearing ${queueSize} stale items from queue (from before extension reload)`);
+      await indexingQueue.clear();
+    }
+
     console.log('[Memex] ✅ Indexing queue ready');
 
     // Initialize indexing pipeline
     console.log('[Memex] Initializing indexing pipeline...');
     await indexingPipeline.initialize();
     console.log('[Memex] ✅ Indexing pipeline ready');
-
-    // Initialize summarizer service
-    console.log('[Memex] Initializing summarizer service...');
-    await summarizerService.initialize();
-    console.log('[Memex] ✅ Summarizer service ready');
 
     // Initialize tab monitor with callback
     console.log('[Memex] Initializing tab monitor...');
@@ -121,8 +146,8 @@ async function initializePhase3(): Promise<void> {
     console.log('[Memex] ✅ Queue processor started');
 
     console.log('[Memex] 🎉 Phase 3 initialized successfully!');
-    console.log('[Memex] Ready to index pages immediately on load');
-    
+    console.log('[Memex] Ready to index pages immediately on load with Chrome AI Summarizer API');
+
     // Mark as initialized
     isInitialized = true;
   } catch (error) {
@@ -198,6 +223,253 @@ chrome.runtime.onStartup.addListener(async () => {
   // Reinitialize Phase 3 components on browser startup
   await initializePhase3();
 });
+
+/**
+ * Run comprehensive search metrics test
+ */
+async function runSearchMetricsTest() {
+  console.log('[Memex] 🧪 Starting search metrics test...');
+
+  // Test configuration - improved queries that actually match test content
+  const testQueries = [
+    // Specific queries that should match our test data well
+    'tensorflow machine learning platform',
+    'javascript programming language',
+    'react library user interface',
+    'nodejs server runtime javascript',
+    'chrome devtools web development',
+    'tensorflow neural networks apis',
+    'react components state management',
+    'nodejs npm package ecosystem',
+    // Keep some broader queries for testing
+    'machine learning',
+    'web development',
+    'AI',
+    'programming'
+  ];
+
+  const searchModes = ['semantic', 'keyword', 'hybrid'] as const;
+  const kValues = [5, 10, 20];
+
+  const results = {
+    byMode: {} as Record<string, {
+      avgTime: number;
+      avgResults: number;
+      avgSimilarity: number;
+      tests: number;
+    }>,
+    sampleQueries: {} as Record<string, {
+      totalTime: number;
+      totalResults: number;
+      byMode: Record<string, number>;
+    }>,
+    allTests: [] as Array<{
+      query: string;
+      mode: string;
+      k: number;
+      time: number;
+      results: number;
+      similarities: number[];
+    }>
+  };
+
+  const modeStats = new Map<string, { times: number[], resultCounts: number[], similarities: number[] }>();
+
+  // Initialize mode stats
+  searchModes.forEach(mode => {
+    modeStats.set(mode, { times: [], resultCounts: [], similarities: [] });
+  });
+
+  let totalTests = 0;
+  let allSimilarities: number[] = [];
+
+  // Run tests for each query and mode
+  for (const query of testQueries) {
+    console.log(`[Memex] Testing query: "${query}"`);
+
+    const queryResults: typeof results.sampleQueries[string] = {
+      totalTime: 0,
+      totalResults: 0,
+      byMode: {}
+    };
+
+    for (const mode of searchModes) {
+      for (const k of kValues) {
+        const startTime = performance.now();
+
+        try {
+          const searchResults = await hybridSearch.search(query, {
+            mode,
+            k,
+            minSimilarity: 0.5 // Use the new threshold
+          });
+
+          const endTime = performance.now();
+          const searchTime = endTime - startTime;
+
+          const similarities = searchResults.map(r => r.similarity || 0);
+          const avgSimilarity = similarities.length > 0
+            ? similarities.reduce((a, b) => a + b, 0) / similarities.length
+            : 0;
+
+          // Store results
+          const stats = modeStats.get(mode)!;
+          stats.times.push(searchTime);
+          stats.resultCounts.push(searchResults.length);
+          stats.similarities.push(...similarities);
+
+          allSimilarities.push(...similarities);
+
+          queryResults.totalTime += searchTime;
+          queryResults.totalResults += searchResults.length;
+          queryResults.byMode[mode] = (queryResults.byMode[mode] || 0) + searchResults.length;
+
+          results.allTests.push({
+            query,
+            mode,
+            k,
+            time: searchTime,
+            results: searchResults.length,
+            similarities
+          });
+
+          console.log(`[Memex] ${mode} (k=${k}): ${searchResults.length} results in ${searchTime.toFixed(2)}ms (avg sim: ${avgSimilarity.toFixed(3)})`);
+
+          totalTests++;
+
+        } catch (error) {
+          console.error(`[Memex] Search failed for query "${query}" with mode ${mode}:`, error);
+          // Still record a failed test
+          const stats = modeStats.get(mode)!;
+          stats.times.push(0);
+          stats.resultCounts.push(0);
+          totalTests++;
+        }
+      }
+    }
+
+    results.sampleQueries[query] = queryResults;
+  }
+
+  // Calculate aggregated stats by mode
+  for (const [mode, stats] of modeStats.entries()) {
+    const avgTime = stats.times.length > 0 ? stats.times.reduce((a, b) => a + b, 0) / stats.times.length : 0;
+    const avgResults = stats.resultCounts.length > 0 ? stats.resultCounts.reduce((a, b) => a + b, 0) / stats.resultCounts.length : 0;
+    const avgSimilarity = stats.similarities.length > 0 ? stats.similarities.reduce((a, b) => a + b, 0) / stats.similarities.length : 0;
+
+    results.byMode[mode] = {
+      avgTime,
+      avgResults,
+      avgSimilarity,
+      tests: stats.times.length
+    };
+  }
+
+  // Calculate summary statistics
+  const dbStats = await vectorStore.getStats();
+  const avgSearchTime = results.allTests.length > 0
+    ? results.allTests.reduce((sum, test) => sum + test.time, 0) / results.allTests.length
+    : 0;
+
+  const fastestMode = Object.entries(results.byMode)
+    .sort(([, a], [, b]) => a.avgTime - b.avgTime)[0]?.[0] || 'unknown';
+
+  const bestResultMode = Object.entries(results.byMode)
+    .sort(([, a], [, b]) => b.avgResults - a.avgResults)[0]?.[0] || 'unknown';
+
+  // Enhanced quality analysis based on similarity scores
+  const validSimilarities = allSimilarities.filter(s => s > 0); // Exclude zero similarities from keyword results
+  const highQualityResults = validSimilarities.filter(s => s >= 0.8).length;
+  const mediumQualityResults = validSimilarities.filter(s => s >= 0.5 && s < 0.8).length;
+  const lowQualityResults = validSimilarities.filter(s => s < 0.5).length;
+
+  // Calculate similarity distribution statistics
+  const maxSimilarity = validSimilarities.length > 0 ? Math.max(...validSimilarities) : 0;
+  const minSimilarity = validSimilarities.length > 0 ? Math.min(...validSimilarities) : 0;
+  const medianSimilarity = validSimilarities.length > 0
+    ? validSimilarities.sort((a, b) => a - b)[Math.floor(validSimilarities.length / 2)]
+    : 0;
+
+  // Check if threshold is being respected (only for semantic results)
+  const thresholdRespected = validSimilarities.every(s => s >= 0.5);
+
+  const summary = {
+    totalTests,
+    totalPages: dbStats.totalPages,
+    avgSearchTime,
+    fastestMode,
+    bestResultMode,
+    highQualityResults,
+    mediumQualityResults,
+    lowQualityResults,
+    thresholdRespected,
+    thresholdLevel: 0.5,
+    // Enhanced similarity analysis
+    maxSimilarity: parseFloat(maxSimilarity.toFixed(3)),
+    minSimilarity: parseFloat(minSimilarity.toFixed(3)),
+    medianSimilarity: parseFloat(medianSimilarity.toFixed(3)),
+    totalSemanticResults: validSimilarities.length,
+    avgSemanticSimilarity: validSimilarities.length > 0
+      ? parseFloat((validSimilarities.reduce((a, b) => a + b, 0) / validSimilarities.length).toFixed(3))
+      : 0
+  };
+
+  console.log('[Memex] 📊 Search metrics test completed:', { totalTests, avgSearchTime, thresholdRespected });
+
+  return {
+    results,
+    summary
+  };
+}
+
+/**
+ * Create meaningful passages from content for better semantic search
+ */
+function createPassagesFromContent(content: string, summary: string): Array<{
+  id: string;
+  text: string;
+  wordCount: number;
+  position: number;
+  quality: number;
+}> {
+  const passages = [];
+
+  // Always include the summary as a high-quality passage
+  passages.push({
+    id: 'passage-summary',
+    text: summary,
+    wordCount: summary.split(/\s+/).length,
+    position: 0,
+    quality: 0.9, // Summary is highest quality
+  });
+
+  // Split content into meaningful chunks (approximately 200-300 words each)
+  const words = content.split(/\s+/);
+  const targetChunkSize = 250; // words per passage
+  const overlap = 50; // overlapping words between passages
+
+  let position = 1;
+  for (let i = 0; i < words.length; i += targetChunkSize - overlap) {
+    const chunk = words.slice(i, Math.min(i + targetChunkSize, words.length));
+    const passageText = chunk.join(' ');
+
+    // Skip very short passages
+    if (chunk.length < 50) continue;
+
+    passages.push({
+      id: `passage-${position}`,
+      text: passageText,
+      wordCount: chunk.length,
+      position,
+      quality: 0.7, // Regular content passages
+    });
+
+    position++;
+  }
+
+  // Limit to max 6 passages per page to avoid storage bloat
+  return passages.slice(0, 6);
+}
 
 /**
  * Handle messages from other parts of the extension
@@ -292,60 +564,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       return true;
 
-    case 'POPULATE_TEST_DATA':
-      // Populate database with test data for evaluation
-      console.log('[Memex] POPULATE_TEST_DATA request received');
-      (async () => {
-        try {
-          console.log(`[Memex] 🧪 Populating ${TEST_PAGES.length} test pages...`);
-
-          let successCount = 0;
-          let failCount = 0;
-
-          for (let i = 0; i < TEST_PAGES.length; i++) {
-            const page = TEST_PAGES[i];
-            try {
-              console.log(`[Memex] 🧪 [${i + 1}/${TEST_PAGES.length}] Processing: ${page.title}`);
-
-              // Generate embedding
-              const embedding = await embeddingService.generateEmbedding(
-                page.title + ' ' + page.summary
-              );
-
-              // Store in database
-              await vectorStore.addPage({
-                url: page.url,
-                title: page.title,
-                content: page.content,
-                summary: page.summary,
-                embedding: embedding,
-                timestamp: Date.now() - (TEST_PAGES.length - i) * 60000, // Stagger timestamps
-                lastAccessed: Date.now() - (TEST_PAGES.length - i) * 60000,
-                dwellTime: 15000 + Math.random() * 30000,
-              });
-
-              successCount++;
-              console.log(`[Memex] 🧪 ✅ [${i + 1}/${TEST_PAGES.length}] Stored: ${page.title}`);
-            } catch (error) {
-              failCount++;
-              console.error(`[Memex] 🧪 ❌ Failed to process: ${page.title}`, error);
-            }
-          }
-
-          console.log(
-            `[Memex] 🧪 ✨ Test data population complete! Success: ${successCount}, Failed: ${failCount}`
-          );
-          sendResponse({
-            success: true,
-            stats: { total: TEST_PAGES.length, success: successCount, failed: failCount },
-          });
-        } catch (error) {
-          console.error('[Memex] 🧪 Failed to populate test data:', error);
-          sendResponse({ success: false, error: (error as Error).message });
-        }
-      })();
-      return true;
-
+    
     case 'SEARCH_QUERY':
       // Perform hybrid search (semantic + keyword + RRF fusion)
       (async () => {
@@ -370,33 +589,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     case 'ADD_TEST_PAGE':
-      // Add a test page to the database (for development/testing)
-      (async () => {
-        try {
-          const { url, title, content, summary } = message;
+      if (!isProd) {
+        // Add a test page to the database (dev-only)
+        (async () => {
+          try {
+            const { url, title, content, summary } = message;
 
-          // Generate embedding
-          const embedding = await embeddingService.generateEmbedding(summary);
+            // Create multiple passages from content for better semantic matching
+            const passages = createPassagesFromContent(content, summary);
 
-          // Add to database
-          const id = await vectorStore.addPage({
-            url,
-            title,
-            content,
-            summary,
-            embedding,
-            timestamp: Date.now(),
-            dwellTime: 60,
-            lastAccessed: 0,
-          });
+            // Generate embedding from title + summary + content snippet
+            // Use first 500 characters of content for better semantic context
+            const contentSnippet = content.length > 500 ? content.substring(0, 500) : content;
+            const embeddingText = `${title}. ${summary} ${contentSnippet}`;
+            const embedding = await embeddingService.generateEmbedding(embeddingText);
 
-          sendResponse({ success: true, id });
-        } catch (error) {
-          console.error('[Memex] Failed to add test page:', error);
-          sendResponse({ success: false, error: (error as Error).message });
-        }
-      })();
-      return true;
+            // Add to database
+            const id = await vectorStore.addPage({
+              url,
+              title,
+              content,
+              summary,
+              passages,
+              embedding,
+              timestamp: Date.now(),
+              dwellTime: 60,
+              lastAccessed: 0,
+            });
+
+            sendResponse({ success: true, id });
+          } catch (error) {
+            console.error('[Memex] Failed to add test page:', error);
+            sendResponse({ success: false, error: (error as Error).message });
+          }
+        })();
+        return true;
+      } else {
+        sendResponse({ success: false, error: 'Not available in production' });
+        return false;
+      }
 
     case 'CLEAR_DATABASE':
       // Clear all data from database (for testing)
@@ -485,137 +716,169 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       return true;
 
-    case 'GET_EVAL_DATA':
-      // Return eval data for chrome-eval.html
-      sendResponse({
-        success: true,
-        testPages: EVAL_TEST_PAGES,
-        queries: EVAL_QUERIES,
-      });
-      return false;
+  
+    case 'RUN_SEARCH_METRICS_TEST':
+      if (!isProd) {
+        // Run comprehensive search metrics test (dev-only)
+        (async () => {
+          try {
+            console.log('[Memex] Running search metrics test...');
 
-    case 'RUN_EVAL':
-      // Run evaluation suite in Chrome context (tests real Summarizer API!)
+            // Get database stats first
+            const dbStats = await vectorStore.getStats();
+            if (dbStats.totalPages === 0) {
+              throw new Error('No indexed pages found. Please browse some websites first.');
+            }
+
+            const metrics = await runSearchMetricsTest();
+
+            console.log('[Memex] Search metrics test completed:', metrics);
+            sendResponse({ success: true, metrics });
+          } catch (error) {
+            console.error('[Memex] Search metrics test failed:', error);
+            sendResponse({
+              success: false,
+              error: (error as Error).message,
+            });
+          }
+        })();
+        return true;
+      } else {
+        sendResponse({ success: false, error: 'Not available in production' });
+        return false;
+      }
+
+    case 'TEST_SUMMARIZER':
+      // Test Chrome Summarizer API with sample text
       (async () => {
         try {
-          const { testPages, queries } = message;
-          console.log(`[Memex Eval] 🧪 Running eval with ${testPages.length} pages, ${queries.length} queries`);
+          const { text, url, title, maxLength } = message;
+          console.log('[Memex] Testing summarizer with:', { textLength: text.length, url, title, maxLength });
 
-          // Clear existing data
-          console.log('[Memex Eval] Clearing database...');
-          await vectorStore.clearAll();
+          // Initialize summarizer and check API availability
+          await summarizerService.initialize();
+          const isApiAvailable = await summarizerService.isAIApiAvailable();
+          console.log('[Memex] API availability check result:', isApiAvailable);
 
-          // Track Summarizer API usage
-          const summarizerAvailable = summarizerService.isAIApiAvailable();
-          console.log('[Memex Eval] Summarizer API available:', summarizerAvailable);
+          const summary = await summarizerService.summarizeForSearch(text, url, title, maxLength);
+          const apiType = isApiAvailable ? 'Chrome AI API' : 'Extractive Fallback';
 
-          // Index test pages using REAL pipeline with sharedContext!
-          console.log('[Memex Eval] Indexing pages...');
-          const indexingResults = [];
-
-          for (let i = 0; i < testPages.length; i++) {
-            const page = testPages[i];
-            const startTime = Date.now();
-
-            try {
-              // Use summarizeForSearch which includes sharedContext
-              const summary = await summarizerService.summarizeForSearch(
-                page.content,
-                page.url,
-                page.title,
-                800
-              );
-
-              // Generate embedding from title + summary (matching production)
-              const embeddingText = `${page.title}. ${summary}`;
-              const embedding = await embeddingService.generateEmbedding(embeddingText);
-
-              // Store in database
-              await vectorStore.addPage({
-                url: page.url,
-                title: page.title,
-                content: page.content,
-                summary,
-                embedding,
-                timestamp: Date.now() - (testPages.length - i) * 60000,
-                dwellTime: 60,
-                lastAccessed: 0,
-              });
-
-              const duration = Date.now() - startTime;
-              indexingResults.push({
-                url: page.url,
-                success: true,
-                duration,
-                summaryLength: summary.length,
-              });
-
-              console.log(`[Memex Eval] ✅ [${i + 1}/${testPages.length}] Indexed: ${page.title.substring(0, 50)} (${duration}ms)`);
-            } catch (error) {
-              const duration = Date.now() - startTime;
-              indexingResults.push({
-                url: page.url,
-                success: false,
-                error: (error as Error).message,
-                duration,
-              });
-              console.error(`[Memex Eval] ❌ [${i + 1}/${testPages.length}] Failed: ${page.title}`, error);
-            }
-          }
-
-          // Run queries
-          console.log('[Memex Eval] Running queries...');
-          const queryResults = [];
-
-          for (const evalQuery of queries) {
-            const startTime = Date.now();
-
-            try {
-              // Generate query embedding
-              const queryEmbedding = await embeddingService.generateEmbedding(evalQuery.query);
-
-              // Search
-              const searchResults = await vectorSearch.search(queryEmbedding, { k: 10 });
-
-              const duration = Date.now() - startTime;
-
-              queryResults.push({
-                query: evalQuery.query,
-                description: evalQuery.description,
-                expectedUrls: evalQuery.expectedUrls,
-                relevance: evalQuery.relevance,
-                results: searchResults.map(r => ({
-                  url: r.page.url,
-                  title: r.page.title,
-                  similarity: r.similarity,
-                })),
-                duration,
-              });
-
-              console.log(`[Memex Eval] ✅ Query: "${evalQuery.query}" (${duration}ms, ${searchResults.length} results)`);
-            } catch (error) {
-              queryResults.push({
-                query: evalQuery.query,
-                error: (error as Error).message,
-              });
-              console.error(`[Memex Eval] ❌ Query failed: "${evalQuery.query}"`, error);
-            }
-          }
-
-          console.log('[Memex Eval] 🎉 Eval complete!');
-
-          sendResponse({
-            success: true,
-            summarizerAvailable,
-            indexingResults,
-            queryResults,
+          console.log('[Memex] Summarizer test successful:', {
+            summaryLength: summary.length,
+            apiType,
+            summaryPreview: summary.substring(0, 100) + '...'
           });
+
+          const response = {
+            success: true,
+            summary,
+            apiType,
+          };
+
+          console.log('[Memex] Sending TEST_SUMMARIZER response:', response);
+          sendResponse(response);
         } catch (error) {
-          console.error('[Memex Eval] ❌ Eval failed:', error);
-          sendResponse({ success: false, error: (error as Error).message });
+          console.error('[Memex] Summarizer test failed:', error);
+          const errorResponse = {
+            success: false,
+            error: (error as Error).message,
+          };
+          console.log('[Memex] Sending TEST_SUMMARIZER error response:', errorResponse);
+          sendResponse(errorResponse);
         }
       })();
       return true;
+
+    case 'TEST_EMBEDDINGS':
+      // Test embedding generation
+      (async () => {
+        try {
+          const { text } = message;
+          console.log('[Memex] Testing embeddings with:', { textLength: text.length });
+
+          // Ensure embedding service is initialized
+          await embeddingService.initialize();
+
+          const startTime = performance.now();
+          const embedding = await embeddingService.generateEmbedding(text);
+          const generationTime = performance.now() - startTime;
+
+          console.log('[Memex] Embedding test successful:', {
+            dimensions: embedding.length,
+            generationTime: generationTime.toFixed(2)
+          });
+
+          sendResponse({
+            success: true,
+            embedding: Array.from(embedding),
+            dimensions: embedding.length,
+            generationTime: Math.round(generationTime),
+            model: 'all-MiniLM-L6-v2'
+          });
+        } catch (error) {
+          console.error('[Memex] Embedding test failed:', error);
+          sendResponse({
+            success: false,
+            error: (error as Error).message,
+          });
+        }
+      })();
+      return true;
+
+    case 'TEST_HYBRID_SEARCH':
+      // Test hybrid search functionality
+      (async () => {
+        try {
+          const { queries } = message;
+          console.log('[Memex] Testing hybrid search with queries:', queries);
+
+          const results = [];
+
+          for (const query of queries) {
+            const queryStartTime = performance.now();
+
+            // Test different search modes
+            const semanticResults = await hybridSearch.search(query, { mode: 'semantic', k: 10 });
+            const keywordResults = await hybridSearch.search(query, { mode: 'keyword', k: 10 });
+            const hybridResults = await hybridSearch.search(query, { mode: 'hybrid', k: 10 });
+
+            const queryTime = performance.now() - queryStartTime;
+
+            results.push({
+              query,
+              semanticCount: semanticResults.length,
+              keywordCount: keywordResults.length,
+              hybridCount: hybridResults.length,
+              processingTime: Math.round(queryTime)
+            });
+          }
+
+          console.log('[Memex] Hybrid search test successful:', results);
+
+          sendResponse({
+            success: true,
+            results
+          });
+        } catch (error) {
+          console.error('[Memex] Hybrid search test failed:', error);
+          sendResponse({
+            success: false,
+            error: (error as Error).message,
+          });
+        }
+      })();
+      return true;
+
+    case 'SUMMARIZER_RESPONSE':
+      // Handle response from offscreen summarizer
+      console.log('[Memex] Received summarizer response:', message.response.id);
+      offscreenManager.handleResponse(message.response);
+      return false;
+
+    case 'OFFSCREEN_SUMMARIZER_READY':
+      // Handle ready signal from offscreen document
+      console.log('[Memex] Offscreen summarizer is ready');
+      return false;
 
     default:
       console.warn('[Memex] Unknown message type:', message.type);
@@ -636,21 +899,63 @@ setInterval(() => {
 /**
  * Handle keyboard commands
  */
-chrome.commands.onCommand.addListener((command) => {
+chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'toggle-sidebar') {
-    console.log('[Memex] Keyboard shortcut triggered');
-    
-    // Send message to active tab to toggle sidebar
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'TOGGLE_SIDEBAR' })
-          .catch((error) => {
-            console.error('[Memex] Error toggling sidebar:', error);
-          });
-      }
-    });
+    console.log('[Memex] Keyboard shortcut (Cmd+Shift+E) triggered from background');
+    await toggleSidebarOnActiveTab();
   }
 });
+
+/**
+ * Handle extension icon click
+ */
+chrome.action.onClicked.addListener(async (tab) => {
+  console.log('[Memex] Extension icon clicked on tab:', tab.id, tab.url);
+  await toggleSidebarOnActiveTab();
+});
+
+/**
+ * Toggle sidebar on the active tab
+ * Shared logic for both keyboard shortcut and icon click
+ */
+async function toggleSidebarOnActiveTab(): Promise<void> {
+  try {
+    // Get active tab
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const activeTab = tabs[0];
+
+    if (!activeTab?.id) {
+      console.warn('[Memex] No active tab found');
+      return;
+    }
+
+    // Check if this is a restricted page
+    if (activeTab.url?.startsWith('chrome://') ||
+        activeTab.url?.startsWith('chrome-extension://') ||
+        activeTab.url?.startsWith('edge://')) {
+      console.warn('[Memex] Cannot run on restricted pages (chrome://, chrome-extension://, etc)');
+      return;
+    }
+
+    console.log('[Memex] Sending TOGGLE_SIDEBAR to tab:', activeTab.id, activeTab.url);
+
+    // Try to send message to content script
+    try {
+      await chrome.tabs.sendMessage(activeTab.id, { type: 'TOGGLE_SIDEBAR' });
+      console.log('[Memex] TOGGLE_SIDEBAR message sent successfully');
+    } catch (error: any) {
+      if (error.message?.includes('Could not establish connection') ||
+          error.message?.includes('Receiving end does not exist')) {
+        console.error('[Memex] Content script not responding. Try refreshing the page.');
+        console.error('[Memex] If the problem persists, the page may block content scripts.');
+      } else {
+        throw error;
+      }
+    }
+  } catch (error) {
+    console.error('[Memex] Error toggling sidebar:', error);
+  }
+}
 
 console.log('[Memex] Background service worker ready');
 

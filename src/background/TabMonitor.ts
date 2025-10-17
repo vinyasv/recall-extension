@@ -12,17 +12,13 @@ export interface TabInfo {
 }
 
 export interface TabMonitorConfig {
-  dwellTimeThreshold: number; // seconds
   excludedProtocols: string[];
   excludedDomains: string[];
-  minContentLength: number;
 }
 
 const DEFAULT_CONFIG: TabMonitorConfig = {
-  dwellTimeThreshold: 10, // 10 seconds for faster testing
   excludedProtocols: ['chrome:', 'chrome-extension:', 'about:', 'edge:', 'data:', 'file:'],
   excludedDomains: [],
-  minContentLength: 100,
 };
 
 export type IndexTriggerCallback = (tabInfo: TabInfo) => Promise<void>;
@@ -169,11 +165,7 @@ export class TabMonitor {
   private _handleTabRemoved(tabId: number): void {
     const tab = this.tabs.get(tabId);
     if (tab) {
-      // Trigger indexing if threshold met
-      if (tab.dwellTime >= this.config.dwellTimeThreshold) {
-        console.log('[TabMonitor] Tab closed, triggering index:', tab.url);
-        this._triggerIndexing(tab);
-      }
+      // No need to trigger indexing on close - already indexed on page load
       this._removeTab(tabId);
     }
 

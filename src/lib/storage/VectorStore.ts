@@ -4,16 +4,20 @@
 
 import type {
   PageRecord,
+  PageMetadata,
   PageRecordUpdate,
   DatabaseStats,
   DatabaseConfig,
   SerializedPageRecord,
+  SerializedPageMetadata,
 } from './types';
 import { generateUUID } from '../../utils/uuid';
+import { loggers } from '../utils/logger';
+import { PERFORMANCE_CONFIG } from '../config/searchConfig';
 
 const DEFAULT_CONFIG: DatabaseConfig = {
   name: 'MemexVectorDB',
-  version: 1,
+  version: 3, // Increment version for metadata support
   storeName: 'pages',
 };
 
@@ -24,6 +28,8 @@ export class VectorStore {
   private db: IDBDatabase | null = null;
   private config: DatabaseConfig;
   private initPromise: Promise<void> | null = null;
+  private statsCache: DatabaseStats | null = null;
+  private statsCacheTimestamp: number = 0;
 
   constructor(config: Partial<DatabaseConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -67,6 +73,8 @@ export class VectorStore {
       request.onupgradeneeded = (event) => {
         console.log('[VectorStore] Database upgrade needed');
         const db = (event.target as IDBOpenDBRequest).result;
+        const transaction = (event.target as IDBOpenDBRequest).transaction;
+        const oldVersion = event.oldVersion;
 
         // Create object store if it doesn't exist
         if (!db.objectStoreNames.contains(this.config.storeName)) {
@@ -81,6 +89,23 @@ export class VectorStore {
           objectStore.createIndex('lastAccessed', 'lastAccessed', { unique: false });
 
           console.log('[VectorStore] Object store and indexes created');
+        } else if (oldVersion < 2) {
+          // Upgrade to version 2: add passage support
+          console.log('[VectorStore] Upgrading to version 2 (passage support)');
+
+          // Clear existing data since we're changing the schema significantly
+          if (transaction) {
+            const objectStore = transaction.objectStore(this.config.storeName);
+            const clearRequest = objectStore.clear();
+
+            clearRequest.onsuccess = () => {
+              console.log('[VectorStore] Cleared old data for passage migration');
+            };
+
+            clearRequest.onerror = () => {
+              console.error('[VectorStore] Failed to clear old data:', clearRequest.error);
+            };
+          }
         }
       };
     });
@@ -106,7 +131,8 @@ export class VectorStore {
       const request = store.add(serialized);
 
       request.onsuccess = () => {
-        console.log('[VectorStore] Page added:', id);
+        this.invalidateStatsCache();
+        loggers.vectorStore.debug('Page added:', id);
         resolve(id);
       };
 
@@ -177,6 +203,32 @@ export class VectorStore {
   }
 
   /**
+   * Get all page metadata (excluding content and passages) for fast search
+   * @returns Array of page metadata records
+   */
+  async getAllPageMetadata(): Promise<PageMetadata[]> {
+    await this.initialize();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.config.storeName], 'readonly');
+      const store = transaction.objectStore(this.config.storeName);
+      const request = store.getAll();
+
+      request.onsuccess = () => {
+        const metadata = request.result.map((serialized) =>
+          this._deserializeMetadata(serialized)
+        );
+        resolve(metadata);
+      };
+
+      request.onerror = () => {
+        console.error('[VectorStore] Failed to get all page metadata:', request.error);
+        reject(new Error(`Failed to get all page metadata: ${request.error}`));
+      };
+    });
+  }
+
+  /**
    * Get all pages from the database
    * @returns Array of all page records
    */
@@ -228,7 +280,8 @@ export class VectorStore {
       const request = store.put(serialized);
 
       request.onsuccess = () => {
-        console.log('[VectorStore] Page updated:', id);
+        this.invalidateStatsCache();
+        loggers.vectorStore.debug('Page updated:', id);
         resolve();
       };
 
@@ -252,7 +305,8 @@ export class VectorStore {
       const request = store.delete(id);
 
       request.onsuccess = () => {
-        console.log('[VectorStore] Page deleted:', id);
+        this.invalidateStatsCache();
+        loggers.vectorStore.debug('Page deleted:', id);
         resolve();
       };
 
@@ -268,29 +322,57 @@ export class VectorStore {
    * @returns Database stats
    */
   async getStats(): Promise<DatabaseStats> {
-    await this.initialize();
+    return loggers.vectorStore.timedAsync('get-stats', async () => {
+      await this.initialize();
 
-    const pages = await this.getAllPages();
-    console.log('[VectorStore] getStats - found', pages.length, 'pages');
+      // Check cache first
+      const now = Date.now();
+      if (
+        this.statsCache &&
+        (now - this.statsCacheTimestamp) < PERFORMANCE_CONFIG.STATS_CACHE_TTL
+      ) {
+        loggers.vectorStore.debug('Returning cached stats');
+        return this.statsCache;
+      }
 
-    const stats: DatabaseStats = {
-      totalPages: pages.length,
-      sizeBytes: 0, // Approximate calculation
-      oldestTimestamp: pages.length > 0 ? Math.min(...pages.map((p) => p.timestamp)) : 0,
-      newestTimestamp: pages.length > 0 ? Math.max(...pages.map((p) => p.timestamp)) : 0,
-      lastAccessedTimestamp:
-        pages.length > 0 ? Math.max(...pages.map((p) => p.lastAccessed)) : 0,
-    };
+      loggers.vectorStore.debug('Computing fresh stats');
 
-    // Approximate size calculation (very rough estimate)
-    pages.forEach((page) => {
-      stats.sizeBytes += page.content.length * 2; // chars are 2 bytes
-      stats.sizeBytes += page.summary.length * 2;
-      stats.sizeBytes += page.embedding.length * 4; // Float32 is 4 bytes
-      stats.sizeBytes += 200; // Overhead for metadata
+      // Use metadata only for faster calculation
+      const metadata = await this.getAllPageMetadata();
+
+      const stats: DatabaseStats = {
+        totalPages: metadata.length,
+        sizeBytes: 0, // Approximate calculation
+        oldestTimestamp: metadata.length > 0 ? Math.min(...metadata.map((p) => p.timestamp)) : 0,
+        newestTimestamp: metadata.length > 0 ? Math.max(...metadata.map((p) => p.timestamp)) : 0,
+        lastAccessedTimestamp:
+          metadata.length > 0 ? Math.max(...metadata.map((p) => p.lastAccessed)) : 0,
+      };
+
+      // Approximate size calculation (metadata only estimation)
+      // This is much faster than loading full pages
+      metadata.forEach((meta) => {
+        // Estimate content size based on title length (rough approximation)
+        stats.sizeBytes += meta.title.length * 2; // chars are 2 bytes
+        stats.sizeBytes += meta.embedding.length * 4; // Float32 is 4 bytes
+        stats.sizeBytes += 300; // Estimated overhead for content and passages
+      });
+
+      // Cache the result
+      this.statsCache = stats;
+      this.statsCacheTimestamp = now;
+
+      return stats;
     });
+  }
 
-    return stats;
+  /**
+   * Invalidate stats cache (call when data changes)
+   */
+  private invalidateStatsCache(): void {
+    this.statsCache = null;
+    this.statsCacheTimestamp = 0;
+    loggers.vectorStore.debug('Stats cache invalidated');
   }
 
   /**
@@ -305,7 +387,8 @@ export class VectorStore {
       const request = store.clear();
 
       request.onsuccess = () => {
-        console.log('[VectorStore] Database cleared');
+        this.invalidateStatsCache();
+        loggers.vectorStore.debug('Database cleared');
         resolve();
       };
 
@@ -325,11 +408,21 @@ export class VectorStore {
 
   /**
    * Serialize a page record for storage
-   * Converts Float32Array to ArrayBuffer
+   * Converts Float32Array to ArrayBuffer and handles passages
    */
   private _serializeRecord(record: PageRecord): SerializedPageRecord {
+    // Serialize passages (convert Float32Array embeddings to ArrayBuffer)
+    const serializedPassages = record.passages.map(passage => ({
+      ...passage,
+      embedding: passage.embedding ? passage.embedding.buffer.slice(
+        passage.embedding.byteOffset,
+        passage.embedding.byteOffset + passage.embedding.byteLength
+      ) as ArrayBuffer : undefined,
+    }));
+
     return {
       ...record,
+      passages: serializedPassages,
       embedding: record.embedding.buffer.slice(
         record.embedding.byteOffset,
         record.embedding.byteOffset + record.embedding.byteLength
@@ -338,12 +431,35 @@ export class VectorStore {
   }
 
   /**
+   * Deserialize page metadata from storage
+   * Converts ArrayBuffer back to Float32Array (excludes content and passages)
+   */
+  private _deserializeMetadata(serialized: SerializedPageRecord | SerializedPageMetadata): PageMetadata {
+    return {
+      id: serialized.id,
+      url: serialized.url,
+      title: serialized.title,
+      embedding: new Float32Array(serialized.embedding),
+      timestamp: serialized.timestamp,
+      dwellTime: serialized.dwellTime,
+      lastAccessed: serialized.lastAccessed,
+    };
+  }
+
+  /**
    * Deserialize a page record from storage
-   * Converts ArrayBuffer back to Float32Array
+   * Converts ArrayBuffer back to Float32Array and handles passages
    */
   private _deserializeRecord(serialized: SerializedPageRecord): PageRecord {
+    // Deserialize passages (convert ArrayBuffer embeddings back to Float32Array)
+    const passages = serialized.passages.map(passage => ({
+      ...passage,
+      embedding: passage.embedding ? new Float32Array(passage.embedding) : undefined,
+    }));
+
     return {
       ...serialized,
+      passages,
       embedding: new Float32Array(serialized.embedding),
     };
   }
