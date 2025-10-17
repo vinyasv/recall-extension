@@ -9,7 +9,7 @@ console.log('[Offscreen Summarizer] Initializing AI summarizer...');
 export {};
 
 /**
- * Chrome AI Summarizer API types
+ * Chrome AI API types
  */
 declare global {
   var Summarizer: {
@@ -25,6 +25,21 @@ declare global {
       summarize(text: string, context?: { context?: string }): Promise<string>;
       summarizeStreaming(text: string, context?: { context?: string }): AsyncIterable<string>;
       destroy(): Promise<void>;
+    }>;
+  };
+
+  var LanguageModel: {
+    availability(): Promise<'available' | 'downloadable' | 'unavailable'>;
+    create(options?: {
+      temperature?: number;
+      topK?: number;
+      systemPrompt?: string;
+      monitor?: (m: any) => void;
+    }): Promise<{
+      prompt(text: string): Promise<string>;
+      promptStreaming(text: string): AsyncIterable<string>;
+      destroy(): Promise<void>;
+      countPromptTokens(text: string): Promise<number>;
     }>;
   };
 }
@@ -47,11 +62,27 @@ interface SummarizeResponse {
   apiType: string;
 }
 
+interface PromptRequest {
+  id: string;
+  prompt: string;
+  options?: any;
+  timestamp: number;
+}
+
+interface PromptResponse {
+  id: string;
+  success: boolean;
+  answer?: string;
+  error?: string;
+  processingTime: number;
+}
+
 class OffscreenSummarizer {
   private isAvailable: boolean = false;
   private isInitialized: boolean = false;
   private processingQueue: SummarizeRequest[] = [];
   private isProcessing: boolean = false;
+  private promptApiAvailable: boolean = false;
 
   /**
    * Initialize the offscreen summarizer
@@ -80,6 +111,21 @@ class OffscreenSummarizer {
       }
 
       this.isInitialized = true;
+
+      // Check Prompt API availability
+      if ('LanguageModel' in self) {
+        const promptAvailability = await LanguageModel.availability();
+        console.log('[Offscreen Summarizer] Prompt API availability:', promptAvailability);
+
+        if (promptAvailability === 'available' || promptAvailability === 'downloadable') {
+          this.promptApiAvailable = true;
+          console.log('[Offscreen Summarizer] ✅ Prompt API is available');
+        } else {
+          console.warn('[Offscreen Summarizer] Prompt API not available:', promptAvailability);
+        }
+      } else {
+        console.warn('[Offscreen Summarizer] Chrome Prompt API not supported');
+      }
 
     } catch (error) {
       console.error('[Offscreen Summarizer] Initialization failed:', error);
@@ -318,6 +364,132 @@ class OffscreenSummarizer {
       processing: this.isProcessing
     };
   }
+
+  /**
+   * Check if Prompt API is available
+   */
+  public isPromptApiAvailable(): boolean {
+    return this.promptApiAvailable && this.isInitialized;
+  }
+
+  /**
+   * Process a prompt request (non-streaming)
+   */
+  public async processPromptRequest(request: PromptRequest): Promise<PromptResponse> {
+    const startTime = Date.now();
+
+    try {
+      console.log(`[Offscreen Summarizer] Processing prompt request ${request.id}`);
+
+      if (!this.promptApiAvailable) {
+        throw new Error('Chrome Prompt API not available');
+      }
+
+      // Create language model session
+      const session = await LanguageModel.create(request.options || {});
+
+      try {
+        // Generate answer
+        const answer = await session.prompt(request.prompt);
+
+        if (!answer || typeof answer !== 'string') {
+          throw new Error('Invalid response from Prompt API');
+        }
+
+        const processingTime = Date.now() - startTime;
+
+        console.log(`[Offscreen Summarizer] ✅ Prompt request ${request.id} completed in ${processingTime}ms`);
+
+        return {
+          id: request.id,
+          success: true,
+          answer,
+          processingTime
+        };
+
+      } finally {
+        try {
+          await session.destroy();
+          console.log(`[Offscreen Summarizer] Session for request ${request.id} destroyed`);
+        } catch (error) {
+          console.warn(`[Offscreen Summarizer] Error destroying session:`, error);
+        }
+      }
+
+    } catch (error) {
+      const processingTime = Date.now() - startTime;
+      console.error(`[Offscreen Summarizer] ❌ Prompt request ${request.id} failed:`, error);
+
+      return {
+        id: request.id,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        processingTime
+      };
+    }
+  }
+
+  /**
+   * Process a prompt request with streaming
+   */
+  public async processPromptRequestStreaming(request: PromptRequest): Promise<void> {
+    try {
+      console.log(`[Offscreen Summarizer] Processing streaming prompt request ${request.id}`);
+
+      if (!this.promptApiAvailable) {
+        throw new Error('Chrome Prompt API not available');
+      }
+
+      // Create language model session
+      const session = await LanguageModel.create(request.options || {});
+
+      try {
+        // Stream answer
+        const stream = session.promptStreaming(request.prompt);
+
+        for await (const chunk of stream) {
+          // Send chunk back to service worker
+          chrome.runtime.sendMessage({
+            type: 'PROMPT_STREAM_CHUNK',
+            requestId: request.id,
+            chunk
+          }).catch(error => {
+            console.error('[Offscreen Summarizer] Failed to send chunk:', error);
+          });
+        }
+
+        // Send completion signal
+        chrome.runtime.sendMessage({
+          type: 'PROMPT_STREAM_COMPLETE',
+          requestId: request.id
+        }).catch(error => {
+          console.error('[Offscreen Summarizer] Failed to send completion:', error);
+        });
+
+        console.log(`[Offscreen Summarizer] ✅ Streaming prompt request ${request.id} completed`);
+
+      } finally {
+        try {
+          await session.destroy();
+          console.log(`[Offscreen Summarizer] Session for request ${request.id} destroyed`);
+        } catch (error) {
+          console.warn(`[Offscreen Summarizer] Error destroying session:`, error);
+        }
+      }
+
+    } catch (error) {
+      console.error(`[Offscreen Summarizer] ❌ Streaming prompt request ${request.id} failed:`, error);
+
+      // Send error signal
+      chrome.runtime.sendMessage({
+        type: 'PROMPT_STREAM_ERROR',
+        requestId: request.id,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }).catch(err => {
+        console.error('[Offscreen Summarizer] Failed to send error:', err);
+      });
+    }
+  }
 }
 
 // Create and initialize the summarizer
@@ -344,6 +516,37 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'SUMMARIZER_STATUS') {
     const status = offscreenSummarizer.getStatus();
     sendResponse({ success: true, status });
+    return true;
+  }
+
+  if (message.type === 'PROMPT_API_STATUS') {
+    const available = offscreenSummarizer.isPromptApiAvailable();
+    sendResponse({ available });
+    return true;
+  }
+
+  if (message.type === 'PROMPT_REQUEST') {
+    // Handle prompt request asynchronously
+    const request: PromptRequest = message.request;
+    offscreenSummarizer.processPromptRequest(request).then(response => {
+      chrome.runtime.sendMessage({
+        type: 'PROMPT_RESPONSE',
+        response
+      }).catch(error => {
+        console.error('[Offscreen Summarizer] Failed to send prompt response:', error);
+      });
+    });
+
+    sendResponse({ success: true, message: 'Prompt request received' });
+    return true;
+  }
+
+  if (message.type === 'PROMPT_STREAMING_REQUEST') {
+    // Handle streaming prompt request asynchronously
+    const request: PromptRequest = message.request;
+    offscreenSummarizer.processPromptRequestStreaming(request);
+
+    sendResponse({ success: true, message: 'Streaming request received' });
     return true;
   }
 

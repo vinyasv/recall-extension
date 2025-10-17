@@ -114,4 +114,7 @@ export const loggers = {
   indexingPipeline: createLogger('IndexingPipeline'),
   contentExtractor: createLogger('ContentExtractor'),
   documentChunker: createLogger('DocumentChunker'),
+  background: createLogger('Background'),
+  promptService: createLogger('PromptService'),
+  ragController: createLogger('RAGController'),
 } as const;

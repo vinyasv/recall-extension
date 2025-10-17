@@ -40,32 +40,65 @@ export function createSidebar(): void {
           </button>
         </div>
 
+        <!-- Tabs -->
+        <div class="rewind-tabs">
+          <button class="rewind-tab rewind-tab-active" data-tab="ask" id="rewindAskTab">Ask</button>
+          <button class="rewind-tab" data-tab="search" id="rewindSearchTab">Search</button>
+        </div>
+
         <!-- Divider -->
         <div class="rewind-divider"></div>
 
-        <!-- Search Box -->
-        <div class="rewind-search-container">
-          <div class="rewind-search-box">
-            <svg class="rewind-search-icon" width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M10 10L13.5 13.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
+        <!-- Ask Tab Content -->
+        <div class="rewind-tab-content rewind-tab-content-active" id="rewindAskContent">
+          <div class="rewind-chat-messages" id="rewindChatMessages">
+            <div class="rewind-chat-empty">
+              <div class="rewind-chat-empty-text">Ask a question about your history</div>
+            </div>
+          </div>
+          <div class="rewind-chat-input-container">
             <input
               type="text"
-              class="rewind-search-input"
-              id="rewindSearchInput"
-              placeholder="search history"
+              class="rewind-chat-input"
+              id="rewindChatInput"
+              placeholder="Ask a question about your history"
               autocomplete="off"
               spellcheck="false"
             />
+            <button class="rewind-chat-send-btn" id="rewindChatSendBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M2 8L14 8M14 8L8 2M14 8L8 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
           </div>
         </div>
 
-        <!-- Clear History Button -->
-        <button id="rewindClearHistoryBtn" class="rewind-clear-btn">Clear History</button>
+        <!-- Search Tab Content -->
+        <div class="rewind-tab-content" id="rewindSearchContent">
+          <!-- Search Box -->
+          <div class="rewind-search-container">
+            <div class="rewind-search-box">
+              <svg class="rewind-search-icon" width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M10 10L13.5 13.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <input
+                type="text"
+                class="rewind-search-input"
+                id="rewindSearchInput"
+                placeholder="search history"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+          </div>
 
-        <!-- Results Container -->
-        <div id="rewindResultsContainer" class="rewind-results"></div>
+          <!-- Clear History Button -->
+          <button id="rewindClearHistoryBtn" class="rewind-clear-btn">Clear History</button>
+
+          <!-- Results Container -->
+          <div id="rewindResultsContainer" class="rewind-results"></div>
+        </div>
       </div>
     </div>
   `;
@@ -240,12 +273,65 @@ function injectStyles(): void {
       transform: scale(0.95);
     }
 
+    /* Tabs */
+    .rewind-tabs {
+      display: flex;
+      gap: 20px;
+      padding: 0 4px;
+      flex-shrink: 0;
+    }
+
+    .rewind-tab {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 400;
+      font-size: 14px;
+      color: rgba(0, 0, 0, 0.4);
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      transition: color 0.2s ease;
+      position: relative;
+    }
+
+    .rewind-tab:hover {
+      color: rgba(0, 0, 0, 0.6);
+    }
+
+    .rewind-tab-active {
+      color: #000000;
+      font-weight: 500;
+    }
+
+    .rewind-tab-active::after {
+      content: '';
+      position: absolute;
+      bottom: -8px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: #000000;
+    }
+
     /* Divider */
     .rewind-divider {
       width: 100%;
       height: 1px;
       background: #E5E5E5;
       flex-shrink: 0;
+    }
+
+    /* Tab Content */
+    .rewind-tab-content {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .rewind-tab-content-active {
+      display: flex;
     }
 
     /* Search */
@@ -463,6 +549,201 @@ function injectStyles(): void {
       0%, 100% { opacity: 0.3; }
       50% { opacity: 0.5; }
     }
+
+    /* Chat Styles */
+    .rewind-chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding-bottom: 12px;
+    }
+
+    .rewind-chat-messages::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .rewind-chat-messages::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .rewind-chat-messages::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.1);
+      border-radius: 3px;
+    }
+
+    .rewind-chat-empty {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .rewind-chat-empty-text {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 400;
+      font-size: 12px;
+      color: rgba(0, 0, 0, 0.5);
+      text-align: center;
+    }
+
+    .rewind-chat-message {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .rewind-chat-message-user {
+      align-items: flex-end;
+    }
+
+    .rewind-chat-message-assistant {
+      align-items: flex-start;
+    }
+
+    .rewind-chat-bubble {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 400;
+      font-size: 12px;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+
+    .rewind-chat-message-user .rewind-chat-bubble {
+      background: #000000;
+      color: #FFFFFF;
+    }
+
+    .rewind-chat-message-assistant .rewind-chat-bubble {
+      background: rgba(0, 0, 0, 0.05);
+      color: #000000;
+    }
+
+    .rewind-chat-sources {
+      max-width: 85%;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.03);
+      border-radius: 8px;
+      margin-top: 4px;
+    }
+
+    .rewind-chat-sources-title {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 500;
+      font-size: 10px;
+      color: rgba(0, 0, 0, 0.6);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .rewind-chat-source-item {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 400;
+      font-size: 11px;
+      color: rgba(0, 0, 0, 0.7);
+      padding: 4px 0;
+      cursor: pointer;
+      transition: color 0.2s ease;
+    }
+
+    .rewind-chat-source-item:hover {
+      color: #000000;
+      text-decoration: underline;
+    }
+
+    .rewind-chat-input-container {
+      flex-shrink: 0;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .rewind-chat-input {
+      flex: 1;
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid #E5E5E5;
+      border-radius: 10px;
+      background: #FFFFFF;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 400;
+      font-size: 12px;
+      color: #000000;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+
+    .rewind-chat-input:focus {
+      border-color: rgba(0, 0, 0, 0.2);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+
+    .rewind-chat-input::placeholder {
+      color: rgba(0, 0, 0, 0.4);
+    }
+
+    .rewind-chat-send-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: #000000;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFFFFF;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .rewind-chat-send-btn:hover {
+      background: rgba(0, 0, 0, 0.85);
+    }
+
+    .rewind-chat-send-btn:active {
+      transform: scale(0.95);
+    }
+
+    .rewind-chat-send-btn:disabled {
+      background: rgba(0, 0, 0, 0.2);
+      cursor: not-allowed;
+    }
+
+    .rewind-chat-loading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: rgba(0, 0, 0, 0.05);
+      border-radius: 12px;
+      max-width: 85%;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 400;
+      font-size: 12px;
+      color: rgba(0, 0, 0, 0.6);
+    }
+
+    .rewind-chat-loading-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(0, 0, 0, 0.1);
+      border-top-color: rgba(0, 0, 0, 0.6);
+      border-radius: 50%;
+      animation: rewindSpin 0.6s linear infinite;
+    }
+
+    @keyframes rewindSpin {
+      to { transform: rotate(360deg); }
+    }
   `;
 
     document.head.appendChild(style);
@@ -486,22 +767,42 @@ function setupEventListeners(): void {
   const backdrop = sidebarContainer.querySelector('.rewind-sidebar-backdrop');
   backdrop?.addEventListener('click', closeSidebar);
 
+  // Tab switching
+  const askTab = sidebarContainer.querySelector('#rewindAskTab');
+  const searchTab = sidebarContainer.querySelector('#rewindSearchTab');
+  const askContent = sidebarContainer.querySelector('#rewindAskContent');
+  const searchContent = sidebarContainer.querySelector('#rewindSearchContent');
+
+  askTab?.addEventListener('click', () => {
+    askTab.classList.add('rewind-tab-active');
+    searchTab?.classList.remove('rewind-tab-active');
+    askContent?.classList.add('rewind-tab-content-active');
+    searchContent?.classList.remove('rewind-tab-content-active');
+  });
+
+  searchTab?.addEventListener('click', () => {
+    searchTab.classList.add('rewind-tab-active');
+    askTab?.classList.remove('rewind-tab-active');
+    searchContent?.classList.add('rewind-tab-content-active');
+    askContent?.classList.remove('rewind-tab-content-active');
+  });
+
   // Search input
   const searchInput = sidebarContainer.querySelector('#rewindSearchInput') as HTMLInputElement;
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
-  
+
   searchInput?.addEventListener('input', (e) => {
     const query = (e.target as HTMLInputElement).value.trim();
-    
+
     if (searchTimeout) {
       clearTimeout(searchTimeout);
     }
-    
+
     if (!query) {
       loadAllHistory();
       return;
     }
-    
+
     searchTimeout = setTimeout(() => {
       performSearch(query);
     }, 300);
@@ -510,6 +811,27 @@ function setupEventListeners(): void {
   // Clear history button
   const clearBtn = sidebarContainer.querySelector('#rewindClearHistoryBtn');
   clearBtn?.addEventListener('click', clearHistory);
+
+  // Chat input and send button
+  const chatInput = sidebarContainer.querySelector('#rewindChatInput') as HTMLInputElement;
+  const chatSendBtn = sidebarContainer.querySelector('#rewindChatSendBtn') as HTMLButtonElement;
+
+  const sendChatMessage = () => {
+    const question = chatInput.value.trim();
+    if (question) {
+      askQuestion(question);
+      chatInput.value = '';
+    }
+  };
+
+  chatSendBtn?.addEventListener('click', sendChatMessage);
+
+  chatInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
 }
 
 /**
@@ -791,6 +1113,144 @@ function escapeHtml(text: string): string {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+/**
+ * Ask a question using RAG
+ */
+async function askQuestion(question: string): Promise<void> {
+  const chatMessages = sidebarContainer?.querySelector('#rewindChatMessages');
+  const chatInput = sidebarContainer?.querySelector('#rewindChatInput') as HTMLInputElement;
+  const chatSendBtn = sidebarContainer?.querySelector('#rewindChatSendBtn') as HTMLButtonElement;
+
+  if (!chatMessages) return;
+
+  // Remove empty state if present
+  const emptyState = chatMessages.querySelector('.rewind-chat-empty');
+  if (emptyState) {
+    emptyState.remove();
+  }
+
+  // Add user message
+  addChatMessage('user', question);
+
+  // Show loading indicator
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'rewind-chat-loading';
+  loadingEl.innerHTML = `
+    <div class="rewind-chat-loading-spinner"></div>
+    <span>Thinking...</span>
+  `;
+  chatMessages.appendChild(loadingEl);
+  scrollChatToBottom();
+
+  // Disable input while processing
+  if (chatInput) chatInput.disabled = true;
+  if (chatSendBtn) chatSendBtn.disabled = true;
+
+  try {
+    if (typeof chrome === 'undefined' || !chrome.runtime) {
+      throw new Error('Chrome runtime not available');
+    }
+
+    // Check RAG availability first
+    const availabilityResponse = await chrome.runtime.sendMessage({
+      type: 'CHECK_RAG_AVAILABILITY',
+    });
+
+    if (!availabilityResponse || !availabilityResponse.available) {
+      throw new Error(
+        'AI features require Chrome 138+ with Gemini Nano. Please ensure Chrome AI is enabled.'
+      );
+    }
+
+    // Send RAG query
+    const response = await chrome.runtime.sendMessage({
+      type: 'RAG_QUERY',
+      question,
+      options: {
+        topK: 5,
+        minSimilarity: 0.3,
+      },
+    });
+
+    // Remove loading indicator
+    loadingEl.remove();
+
+    if (response && response.success) {
+      // Add assistant message with answer
+      addChatMessage('assistant', response.answer, response.sources);
+    } else {
+      throw new Error(response?.error || 'Failed to get answer');
+    }
+  } catch (error) {
+    console.error('[Rewind Sidebar] Error asking question:', error);
+
+    // Remove loading indicator
+    loadingEl.remove();
+
+    // Add error message
+    const errorMessage = error instanceof Error ? error.message : 'Failed to answer question';
+    addChatMessage('assistant', `Sorry, I encountered an error: ${errorMessage}`);
+  } finally {
+    // Re-enable input
+    if (chatInput) chatInput.disabled = false;
+    if (chatSendBtn) chatSendBtn.disabled = false;
+    if (chatInput) chatInput.focus();
+  }
+}
+
+/**
+ * Add a chat message to the UI
+ */
+function addChatMessage(role: 'user' | 'assistant', content: string, sources?: any[]): void {
+  const chatMessages = sidebarContainer?.querySelector('#rewindChatMessages');
+  if (!chatMessages) return;
+
+  const messageEl = document.createElement('div');
+  messageEl.className = `rewind-chat-message rewind-chat-message-${role}`;
+
+  const bubbleEl = document.createElement('div');
+  bubbleEl.className = 'rewind-chat-bubble';
+  bubbleEl.textContent = content;
+
+  messageEl.appendChild(bubbleEl);
+
+  // Add sources if available (for assistant messages)
+  if (role === 'assistant' && sources && sources.length > 0) {
+    const sourcesEl = document.createElement('div');
+    sourcesEl.className = 'rewind-chat-sources';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'rewind-chat-sources-title';
+    titleEl.textContent = `Sources (${sources.length})`;
+    sourcesEl.appendChild(titleEl);
+
+    sources.forEach((source) => {
+      const sourceItem = document.createElement('div');
+      sourceItem.className = 'rewind-chat-source-item';
+      sourceItem.textContent = `• ${source.page.title || 'Untitled'}`;
+      sourceItem.addEventListener('click', () => {
+        window.open(source.page.url, '_blank');
+      });
+      sourcesEl.appendChild(sourceItem);
+    });
+
+    messageEl.appendChild(sourcesEl);
+  }
+
+  chatMessages.appendChild(messageEl);
+  scrollChatToBottom();
+}
+
+/**
+ * Scroll chat to bottom
+ */
+function scrollChatToBottom(): void {
+  const chatMessages = sidebarContainer?.querySelector('#rewindChatMessages');
+  if (chatMessages) {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
 }
 
 // Listen for keyboard shortcut

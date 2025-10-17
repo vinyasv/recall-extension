@@ -26,10 +26,31 @@ interface SummarizeCallbacks {
   reject: (reason?: any) => void;
 }
 
+interface PromptRequest {
+  id: string;
+  prompt: string;
+  options?: any;
+  timestamp: number;
+}
+
+interface PromptResponse {
+  id: string;
+  success: boolean;
+  answer?: string;
+  error?: string;
+  processingTime: number;
+}
+
+interface PromptCallbacks {
+  resolve: (value: string) => void;
+  reject: (reason?: any) => void;
+}
+
 export class OffscreenManager {
   private static instance: OffscreenManager;
   private isOffscreenOpen: boolean = false;
   private pendingRequests: Map<string, SummarizeCallbacks> = new Map();
+  private pendingPromptRequests: Map<string, PromptCallbacks> = new Map();
   private requestIdCounter: number = 0;
   private creationPromise: Promise<void> | null = null;
 
@@ -286,6 +307,170 @@ export class OffscreenManager {
   }
 
   /**
+   * Check Prompt API availability
+   */
+  public async checkPromptApiAvailability(): Promise<{ available: boolean }> {
+    await this.ensureOffscreenOpen();
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'PROMPT_API_STATUS'
+      });
+      return { available: response?.available || false };
+    } catch (error) {
+      console.error('[OffscreenManager] Failed to check Prompt API availability:', error);
+      return { available: false };
+    }
+  }
+
+  /**
+   * Send prompt to Prompt API (non-streaming)
+   */
+  public async prompt(prompt: string, options?: any): Promise<string> {
+    await this.ensureOffscreenOpen();
+
+    const requestId = this.generateRequestId();
+
+    return new Promise<string>((resolve, reject) => {
+      // Store promise callbacks
+      this.pendingPromptRequests.set(requestId, { resolve, reject });
+
+      // Create request object
+      const request: PromptRequest = {
+        id: requestId,
+        prompt,
+        options,
+        timestamp: Date.now()
+      };
+
+      // Set timeout for request
+      const timeout = setTimeout(() => {
+        this.pendingPromptRequests.delete(requestId);
+        reject(new Error('Prompt request timed out'));
+      }, 120000); // 120 second timeout (prompts can take longer)
+
+      // Update resolve callback to clear timeout
+      const originalResolve = resolve;
+      const wrappedResolve = (value: string) => {
+        clearTimeout(timeout);
+        originalResolve(value);
+      };
+
+      // Store updated callbacks
+      this.pendingPromptRequests.set(requestId, { resolve: wrappedResolve, reject });
+
+      console.log(`[OffscreenManager] Sending prompt request: ${requestId}`);
+
+      // Send request to offscreen document
+      chrome.runtime.sendMessage({
+        type: 'PROMPT_REQUEST',
+        request
+      }).catch((error) => {
+        clearTimeout(timeout);
+        this.pendingPromptRequests.delete(requestId);
+        reject(new Error(`Failed to send prompt request to offscreen document: ${error}`));
+      });
+    });
+  }
+
+  /**
+   * Send prompt with streaming response
+   */
+  public async *promptStreaming(
+    prompt: string,
+    options?: any
+  ): AsyncGenerator<string, void, unknown> {
+    await this.ensureOffscreenOpen();
+
+    const requestId = this.generateRequestId();
+
+    // Create a channel for streaming chunks
+    const chunks: string[] = [];
+    let isComplete = false;
+    let error: Error | null = null;
+
+    // Set up listener for streaming chunks
+    const messageHandler = (message: any) => {
+      if (message.type === 'PROMPT_STREAM_CHUNK' && message.requestId === requestId) {
+        chunks.push(message.chunk);
+      } else if (message.type === 'PROMPT_STREAM_COMPLETE' && message.requestId === requestId) {
+        isComplete = true;
+        chrome.runtime.onMessage.removeListener(messageHandler);
+      } else if (message.type === 'PROMPT_STREAM_ERROR' && message.requestId === requestId) {
+        error = new Error(message.error);
+        isComplete = true;
+        chrome.runtime.onMessage.removeListener(messageHandler);
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(messageHandler);
+
+    // Send request
+    const request: PromptRequest = {
+      id: requestId,
+      prompt,
+      options,
+      timestamp: Date.now()
+    };
+
+    console.log(`[OffscreenManager] Sending streaming prompt request: ${requestId}`);
+
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'PROMPT_STREAMING_REQUEST',
+        request
+      });
+    } catch (err) {
+      chrome.runtime.onMessage.removeListener(messageHandler);
+      throw new Error(`Failed to send streaming request: ${err}`);
+    }
+
+    // Yield chunks as they arrive
+    let lastYieldedIndex = 0;
+    while (!isComplete) {
+      if (error) {
+        throw error;
+      }
+
+      // Yield any new chunks
+      while (lastYieldedIndex < chunks.length) {
+        yield chunks[lastYieldedIndex];
+        lastYieldedIndex++;
+      }
+
+      // Wait a bit before checking again
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    // Yield any remaining chunks
+    while (lastYieldedIndex < chunks.length) {
+      yield chunks[lastYieldedIndex];
+      lastYieldedIndex++;
+    }
+  }
+
+  /**
+   * Handle prompt response from offscreen document
+   */
+  public handlePromptResponse(response: PromptResponse): void {
+    const callbacks = this.pendingPromptRequests.get(response.id);
+
+    if (callbacks) {
+      this.pendingPromptRequests.delete(response.id);
+
+      if (response.success && response.answer) {
+        console.log(`[OffscreenManager] ✅ Prompt request ${response.id} succeeded`);
+        callbacks.resolve(response.answer);
+      } else {
+        console.error(`[OffscreenManager] ❌ Prompt request ${response.id} failed:`, response.error);
+        callbacks.reject(new Error(response.error || 'Prompt generation failed'));
+      }
+    } else {
+      console.warn(`[OffscreenManager] Received prompt response for unknown request: ${response.id}`);
+    }
+  }
+
+  /**
    * Clean up pending requests
    */
   public cleanup(): void {
@@ -294,6 +479,11 @@ export class OffscreenManager {
       callbacks.reject(new Error('Offscreen manager shutting down'));
     }
     this.pendingRequests.clear();
+
+    for (const [, callbacks] of this.pendingPromptRequests) {
+      callbacks.reject(new Error('Offscreen manager shutting down'));
+    }
+    this.pendingPromptRequests.clear();
   }
 }
 

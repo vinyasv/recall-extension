@@ -11,6 +11,7 @@ import { TabMonitor } from './TabMonitor';
 import { indexingQueue } from './IndexingQueue';
 import { indexingPipeline } from './IndexingPipeline';
 import { offscreenManager } from './OffscreenManager';
+import { ragController } from '../lib/rag/RAGController';
 
 console.log('[Memex] Background service worker started');
 
@@ -879,6 +880,103 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Handle ready signal from offscreen document
       console.log('[Memex] Offscreen summarizer is ready');
       return false;
+
+    case 'PROMPT_RESPONSE':
+      // Handle response from offscreen prompt API
+      console.log('[Memex] Received prompt response:', message.response.id);
+      offscreenManager.handlePromptResponse(message.response);
+      return false;
+
+    case 'RAG_QUERY':
+      // Answer a question using RAG (Retrieval-Augmented Generation)
+      (async () => {
+        try {
+          const { question, options } = message;
+          console.log('[Memex] RAG query received:', question);
+
+          const result = await ragController.answerQuestion(question, options);
+
+          sendResponse({
+            success: true,
+            answer: result.answer,
+            sources: result.sources,
+            timings: {
+              total: result.processingTime,
+              search: result.searchTime,
+              generation: result.generationTime,
+            },
+          });
+        } catch (error) {
+          console.error('[Memex] RAG query failed:', error);
+          sendResponse({
+            success: false,
+            error: (error as Error).message,
+          });
+        }
+      })();
+      return true;
+
+    case 'RAG_QUERY_STREAMING':
+      // Answer a question using RAG with streaming response
+      (async () => {
+        try {
+          const { question, options } = message;
+          console.log('[Memex] RAG streaming query received:', question);
+
+          // Note: Streaming requires a different communication pattern
+          // We'll send chunks via separate messages
+          const stream = ragController.answerQuestionStreaming(question, options);
+
+          for await (const item of stream) {
+            if (item.type === 'chunk') {
+              // Send chunk back to UI
+              chrome.runtime.sendMessage({
+                type: 'RAG_STREAM_CHUNK',
+                requestId: message.requestId,
+                chunk: item.content,
+              }).catch(error => {
+                console.error('[Memex] Failed to send RAG chunk:', error);
+              });
+            } else if (item.type === 'complete') {
+              // Send completion with metadata
+              chrome.runtime.sendMessage({
+                type: 'RAG_STREAM_COMPLETE',
+                requestId: message.requestId,
+                sources: item.sources,
+                timings: item.timings,
+              }).catch(error => {
+                console.error('[Memex] Failed to send RAG completion:', error);
+              });
+            }
+          }
+
+          sendResponse({ success: true, message: 'Streaming started' });
+        } catch (error) {
+          console.error('[Memex] RAG streaming query failed:', error);
+          chrome.runtime.sendMessage({
+            type: 'RAG_STREAM_ERROR',
+            requestId: message.requestId,
+            error: (error as Error).message,
+          }).catch(err => {
+            console.error('[Memex] Failed to send RAG error:', err);
+          });
+          sendResponse({ success: false, error: (error as Error).message });
+        }
+      })();
+      return true;
+
+    case 'CHECK_RAG_AVAILABILITY':
+      // Check if RAG functionality is available
+      (async () => {
+        try {
+          const available = await ragController.isAvailable();
+          sendResponse({ success: true, available });
+        } catch (error) {
+          console.error('[Memex] Failed to check RAG availability:', error);
+          sendResponse({ success: false, available: false, error: (error as Error).message });
+        }
+      })();
+      return true;
 
     default:
       console.warn('[Memex] Unknown message type:', message.type);

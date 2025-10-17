@@ -197,8 +197,20 @@ export class ContentExtractor {
       score += Math.min(avgPLength / 10, 20);
 
       // 4. Penalize if it contains navigation/footer keywords
-      const className = container.className.toLowerCase();
-      const id = container.id.toLowerCase();
+      // Handle SVG elements and other edge cases where className is not a string
+      let className = '';
+      let id = '';
+
+      try {
+        className = typeof container.className === 'string'
+          ? container.className.toLowerCase()
+          : String(container.className || '').toLowerCase();
+        id = typeof container.id === 'string'
+          ? container.id.toLowerCase()
+          : String(container.id || '').toLowerCase();
+      } catch (e) {
+        // Ignore errors from accessing className/id on unusual elements
+      }
       if (
         className.includes('nav') ||
         className.includes('menu') ||
