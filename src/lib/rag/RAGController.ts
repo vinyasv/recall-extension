@@ -1,12 +1,14 @@
 /**
  * RAGController - Orchestrates Retrieval-Augmented Generation
- * Combines HybridSearch with PromptService to answer questions from browsing history
+ * Combines PassageRetriever with PromptService to answer questions from browsing history
  */
 
-import { hybridSearch } from '../search/HybridSearch';
+import { passageRetriever } from './PassageRetriever';
+import { queryIntentClassifier } from './QueryIntentClassifier';
 import { promptService } from '../prompt/PromptService';
 import type { SearchResult } from '../search/types';
 import type { PromptOptions } from '../prompt/PromptService';
+import type { RetrievedPassage, QueryIntent } from './types';
 import { loggers } from '../utils/logger';
 
 export interface RAGOptions {
@@ -46,25 +48,29 @@ export class RAGController {
 
     loggers.ragController.debug('Answering question:', question);
 
-    // Step 1: Retrieve relevant documents using hybrid search
-    const searchStartTime = Date.now();
-    const searchResults = await hybridSearch.search(question, {
-      k: opts.topK,
-      mode: 'hybrid',
-    });
+    // Step 1: Classify query intent
+    const intent = queryIntentClassifier.classifyQuery(question);
+    const intentConfig = queryIntentClassifier.getIntentConfig(intent.type);
 
-    // Filter by minimum similarity
-    const relevantResults = searchResults.filter(
-      (result) => result.similarity >= opts.minSimilarity
-    );
+    loggers.ragController.debug(`Query intent: ${intent.type} (confidence: ${intent.confidence.toFixed(2)})`);
+
+    // Step 2: Retrieve relevant passages using intent-aware configuration
+    const searchStartTime = Date.now();
+    const passages = await passageRetriever.retrieve(question, {
+      topK: intentConfig.topK,
+      minSimilarity: opts.minSimilarity,
+      maxPassagesPerPage: 3,
+      maxPagesPerDomain: intentConfig.diversityRequired ? 2 : 3,
+      qualityWeight: 0.3,
+    });
 
     const searchTime = Date.now() - searchStartTime;
 
     loggers.ragController.debug(
-      `Found ${relevantResults.length} relevant results in ${searchTime}ms`
+      `Retrieved ${passages.length} passages in ${searchTime}ms`
     );
 
-    if (relevantResults.length === 0) {
+    if (passages.length === 0) {
       return {
         answer: "I couldn't find any relevant information in your browsing history to answer this question.",
         sources: [],
@@ -74,27 +80,53 @@ export class RAGController {
       };
     }
 
-    // Step 2: Build context from search results
-    const context = this._buildContext(relevantResults, opts.maxContextLength);
+    // Step 3: Build context from passages
+    const context = this._buildContextFromPassages(passages, opts.maxContextLength, intent);
 
     loggers.ragController.debug(`Built context with ${context.length} characters`);
 
-    // Step 3: Generate answer using Prompt API
+    // Step 4: Generate answer using Prompt API with intent
     const generationStartTime = Date.now();
-    const response = await promptService.generateAnswer(question, context, opts.promptOptions);
-    const generationTime = Date.now() - generationStartTime;
 
-    const totalTime = Date.now() - startTime;
+    try {
+      const response = await promptService.generateAnswer(question, context, {
+        ...opts.promptOptions,
+        intent,
+      });
+      const generationTime = Date.now() - generationStartTime;
+      const totalTime = Date.now() - startTime;
 
-    loggers.ragController.debug(`✅ Answer generated in ${totalTime}ms total`);
+      loggers.ragController.debug(`Answer generated in ${totalTime}ms total`);
 
-    return {
-      answer: response.answer,
-      sources: relevantResults,
-      processingTime: totalTime,
-      searchTime,
-      generationTime,
-    };
+      // Convert passages to SearchResult format for compatibility
+      const sources = this._passagesToSearchResults(passages);
+
+      return {
+        answer: response.answer,
+        sources,
+        processingTime: totalTime,
+        searchTime,
+        generationTime,
+      };
+    } catch (error) {
+      loggers.ragController.error('Failed to generate answer with Prompt API:', error);
+
+      // Fallback: Return context directly if generation fails
+      const generationTime = Date.now() - generationStartTime;
+      const totalTime = Date.now() - startTime;
+
+      const fallbackAnswer = `Based on your browsing history, here's what I found:\n\n${context.substring(0, 1000)}${context.length > 1000 ? '...\n\n[Note: Full context available in sources]' : ''}`;
+
+      const sources = this._passagesToSearchResults(passages);
+
+      return {
+        answer: fallbackAnswer,
+        sources,
+        processingTime: totalTime,
+        searchTime,
+        generationTime,
+      };
+    }
   }
 
   /**
@@ -116,20 +148,23 @@ export class RAGController {
 
     loggers.ragController.debug('Answering question (streaming):', question);
 
-    // Step 1: Retrieve relevant documents
-    const searchStartTime = Date.now();
-    const searchResults = await hybridSearch.search(question, {
-      k: opts.topK,
-      mode: 'hybrid',
-    });
+    // Step 1: Classify query intent
+    const intent = queryIntentClassifier.classifyQuery(question);
+    const intentConfig = queryIntentClassifier.getIntentConfig(intent.type);
 
-    const relevantResults = searchResults.filter(
-      (result) => result.similarity >= opts.minSimilarity
-    );
+    // Step 2: Retrieve relevant passages
+    const searchStartTime = Date.now();
+    const passages = await passageRetriever.retrieve(question, {
+      topK: intentConfig.topK,
+      minSimilarity: opts.minSimilarity,
+      maxPassagesPerPage: 3,
+      maxPagesPerDomain: intentConfig.diversityRequired ? 2 : 3,
+      qualityWeight: 0.3,
+    });
 
     const searchTime = Date.now() - searchStartTime;
 
-    if (relevantResults.length === 0) {
+    if (passages.length === 0) {
       yield {
         type: 'chunk',
         content: "I couldn't find any relevant information in your browsing history to answer this question.",
@@ -142,12 +177,15 @@ export class RAGController {
       return;
     }
 
-    // Step 2: Build context
-    const context = this._buildContext(relevantResults, opts.maxContextLength);
+    // Step 3: Build context
+    const context = this._buildContextFromPassages(passages, opts.maxContextLength, intent);
 
-    // Step 3: Stream answer generation
+    // Step 4: Stream answer generation
     const generationStartTime = Date.now();
-    const stream = promptService.generateAnswerStreaming(question, context, opts.promptOptions);
+    const stream = promptService.generateAnswerStreaming(question, context, {
+      ...opts.promptOptions,
+      intent,
+    });
 
     for await (const chunk of stream) {
       yield { type: 'chunk', content: chunk };
@@ -155,10 +193,13 @@ export class RAGController {
 
     const generationTime = Date.now() - generationStartTime;
 
+    // Convert passages to SearchResult format
+    const sources = this._passagesToSearchResults(passages);
+
     // Final metadata
     yield {
       type: 'complete',
-      sources: relevantResults,
+      sources,
       timings: {
         searchTime,
         generationTime,
@@ -168,26 +209,48 @@ export class RAGController {
   }
 
   /**
-   * Build context string from search results
-   * Uses a hybrid approach: page-level search, then extract best passages
+   * Build context from passages with quality indicators
    */
-  private _buildContext(results: SearchResult[], maxLength: number): string {
+  private _buildContextFromPassages(
+    passages: RetrievedPassage[],
+    maxLength: number,
+    _intent: QueryIntent
+  ): string {
     let context = '';
     let currentLength = 0;
 
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      const page = result.page;
+    // Group passages by source page
+    const groupedPassages = passageRetriever.groupByPage(passages);
+    const sources = Array.from(groupedPassages.entries());
 
-      // Format: [Source N] Title (domain)
-      const sourceHeader = `[Source ${i + 1}] ${page.title}\n`;
-      const sourceUrl = `URL: ${page.url}\n`;
+    for (let i = 0; i < sources.length; i++) {
+      const [_pageId, pagePassages] = sources[i];
+      const firstPassage = pagePassages[0];
 
-      // Extract best passages from the page
-      const passages = this._extractBestPassages(page, result);
-      const sourceContent = passages.length > 0
-        ? passages.join('\n\n') + '\n\n'
-        : `${page.summary || page.content.substring(0, 500)}\n\n`;
+      // Quality indicator for the passage
+      const quality = firstPassage.passage.quality;
+      const qualityLabel =
+        quality >= 0.7
+          ? '[High Quality]'
+          : quality >= 0.4
+          ? '[Medium Quality]'
+          : '[Lower Quality]';
+
+      // Format: [Source N] Title (quality)
+      const sourceHeader = `[Source ${i + 1}] ${firstPassage.pageTitle} ${qualityLabel}\n`;
+      const sourceUrl = `URL: ${firstPassage.pageUrl}\n`;
+
+      // Combine passages from this page
+      const passageTexts = pagePassages
+        .map((p) => {
+          const passageQuality = p.passage.quality;
+          const label =
+            passageQuality >= 0.7 ? '[★★★]' : passageQuality >= 0.4 ? '[★★]' : '[★]';
+          return `${label} ${p.passage.text.trim()}`;
+        })
+        .join('\n\n');
+
+      const sourceContent = passageTexts + '\n\n';
 
       const fullSource = sourceHeader + sourceUrl + sourceContent;
 
@@ -210,29 +273,29 @@ export class RAGController {
   }
 
   /**
-   * Extract the best passages from a page for RAG context
-   * Prioritizes passages with high quality scores and reasonable length
-   * Returns top 2-3 most relevant passages per page
+   * Convert passages to SearchResult format for compatibility
    */
-  private _extractBestPassages(page: any, _searchResult: SearchResult): string[] {
-    // If no passages, return empty array (will fall back to summary/content)
-    if (!page.passages || page.passages.length === 0) {
-      return [];
-    }
+  private _passagesToSearchResults(passages: RetrievedPassage[]): SearchResult[] {
+    // Get unique sources
+    const sources = passageRetriever.getUniqueSources(passages);
 
-    // Sort passages by quality score (descending)
-    const sortedPassages = [...page.passages].sort((a, b) => b.quality - a.quality);
-
-    // Take top 3 passages, prioritizing those with good quality and length
-    const selectedPassages = sortedPassages
-      .filter((passage) => {
-        // Filter out very short passages (likely navigation/boilerplate)
-        return passage.wordCount >= 20 && passage.quality > 0.3;
-      })
-      .slice(0, 3) // Top 3 passages
-      .map((passage) => passage.text.trim());
-
-    return selectedPassages;
+    // Convert to SearchResult format
+    return sources.map((source) => ({
+      page: {
+        id: source.pageId,
+        url: source.pageUrl,
+        title: source.pageTitle,
+        content: '', // We don't need full content
+        summary: '', // We don't need summary
+        passages: [], // Passages already used in context
+        embedding: new Float32Array(), // Not needed
+        timestamp: Date.now(),
+        dwellTime: 0,
+        lastAccessed: 0,
+      },
+      similarity: 0, // Not meaningful at page level
+      relevanceScore: 0, // Not meaningful at page level
+    }));
   }
 
   /**

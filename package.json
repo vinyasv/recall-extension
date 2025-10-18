@@ -1,5 +1,5 @@
 {
-  "name": "memex-extension",
+  "name": "recall-extension",
   "version": "1.0.0",
   "description": "Private Semantic Search for Browser History - Search what you meant, not what you typed",
   "type": "module",
@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
-    "hybrid:test": "tsx scripts/hybrid-test-query.ts"
+    "hybrid:test": "tsx scripts/hybrid-test-query.ts",
+    "eval:rag": "tsx evals/rag-eval-runner.ts",
+    "eval:rag:chrome": "tsx evals/chrome-rag-eval.ts"
   },
   "keywords": [
     "chrome-extension",

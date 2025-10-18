@@ -16,7 +16,7 @@ import { loggers } from '../utils/logger';
 import { PERFORMANCE_CONFIG } from '../config/searchConfig';
 
 const DEFAULT_CONFIG: DatabaseConfig = {
-  name: 'MemexVectorDB',
+  name: 'RecallVectorDB',
   version: 3, // Increment version for metadata support
   storeName: 'pages',
 };

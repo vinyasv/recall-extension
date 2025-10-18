@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Memex - Search Your History</title>
+  <title>Recall - Search Your History</title>
   <style>
     * {
       margin: 0;
@@ -358,7 +358,7 @@
 <body>
   <div class="container">
     <div class="header">
-      <div class="logo">Memex</div>
+      <div class="logo">Recall</div>
       <div class="tagline">Search what you meant, not what you typed</div>
     </div>
 
@@ -407,7 +407,7 @@
       <div class="no-db-state-icon">📭</div>
       <div class="no-db-state-title">No Pages Indexed Yet</div>
       <div class="no-db-state-text">
-        Browse the web for a while, and Memex will automatically index pages you spend time on.<br>
+        Browse the web for a while, and Recall will automatically index pages you spend time on.<br>
         Come back later to search your browsing history!
       </div>
     </div>

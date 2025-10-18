@@ -5,11 +5,13 @@
 
 import { offscreenManager } from '../../background/OffscreenManager';
 import { loggers } from '../utils/logger';
+import type { QueryIntent } from '../rag/types';
 
 export interface PromptOptions {
   temperature?: number;
   topK?: number;
   systemPrompt?: string;
+  intent?: QueryIntent;
 }
 
 export interface PromptResponse {
@@ -36,14 +38,14 @@ export class PromptService {
 
     try {
       await offscreenManager.ensureOffscreenOpen();
-      loggers.promptService.debug('✅ Offscreen document ready for prompting');
+      loggers.promptService.debug('Offscreen document ready for prompting');
     } catch (error) {
       loggers.promptService.error('Failed to initialize offscreen document:', error);
       throw error;
     }
 
     this.isInitialized = true;
-    loggers.promptService.debug('✅ Initialized with offscreen document support');
+    loggers.promptService.debug('Initialized with offscreen document support');
   }
 
   /**
@@ -82,7 +84,7 @@ export class PromptService {
     loggers.promptService.debug('Generating streaming answer...');
 
     // Build the full prompt with context
-    const fullPrompt = this._buildPromptWithContext(prompt, context, options.systemPrompt);
+    const fullPrompt = this._buildPromptWithContext(prompt, context, options.systemPrompt, options.intent);
 
     try {
       // Request streaming from offscreen manager
@@ -92,7 +94,7 @@ export class PromptService {
         yield chunk;
       }
 
-      loggers.promptService.debug('✅ Streaming completed');
+      loggers.promptService.debug('Streaming completed');
     } catch (error) {
       loggers.promptService.error('Streaming failed:', error);
       throw error;
@@ -120,13 +122,13 @@ export class PromptService {
     loggers.promptService.debug('Generating answer...');
 
     // Build the full prompt with context
-    const fullPrompt = this._buildPromptWithContext(prompt, context, options.systemPrompt);
+    const fullPrompt = this._buildPromptWithContext(prompt, context, options.systemPrompt, options.intent);
 
     try {
       const answer = await offscreenManager.prompt(fullPrompt, options);
       const processingTime = Date.now() - startTime;
 
-      loggers.promptService.debug('✅ Answer generated in', processingTime, 'ms');
+      loggers.promptService.debug('Answer generated in', processingTime, 'ms');
 
       return {
         answer,
@@ -144,18 +146,11 @@ export class PromptService {
   private _buildPromptWithContext(
     userQuestion: string,
     context: string,
-    systemPrompt?: string
+    systemPrompt?: string,
+    intent?: QueryIntent
   ): string {
-    const defaultSystemPrompt = `You are a helpful AI assistant that answers questions based on the user's browsing history. Use the provided context from their previously visited web pages to answer their questions accurately and concisely.
-
-IMPORTANT INSTRUCTIONS:
-- Only use information from the provided context
-- If the context doesn't contain enough information to answer the question, say so honestly
-- Cite the source pages when relevant by mentioning the page title or domain
-- Be concise but thorough
-- If multiple pages contain relevant information, synthesize them into a coherent answer`;
-
-    const finalSystemPrompt = systemPrompt || defaultSystemPrompt;
+    // Use custom system prompt if provided, otherwise use intent-specific prompt
+    const finalSystemPrompt = systemPrompt || this._getIntentSpecificPrompt(intent);
 
     return `${finalSystemPrompt}
 
@@ -166,6 +161,69 @@ USER QUESTION:
 ${userQuestion}
 
 ANSWER:`;
+  }
+
+  /**
+   * Get intent-specific system prompt
+   */
+  private _getIntentSpecificPrompt(intent?: QueryIntent): string {
+    const intentType = intent?.type || 'general';
+
+    const prompts = {
+      factual: `You are a precise AI assistant that answers factual questions based on the user's browsing history.
+
+IMPORTANT INSTRUCTIONS:
+- Only use information from the provided context - DO NOT use external knowledge
+- Prioritize passages marked with [High Quality] for more accurate information
+- If the context doesn't contain enough information, say "I don't have enough information in your browsing history to answer this question"
+- Cite specific sources by page title: "According to [Page Title], ..."
+- Be direct and concise - provide facts without unnecessary elaboration
+- If multiple sources contain the same information, cite the highest quality source`,
+
+      comparison: `You are an analytical AI assistant that helps compare different perspectives from the user's browsing history.
+
+IMPORTANT INSTRUCTIONS:
+- Only use information from the provided context
+- Present multiple viewpoints when available
+- Structure your answer to clearly distinguish between different perspectives
+- Cite sources for each perspective: "According to [Source A]... while [Source B] suggests..."
+- If sources conflict, present both sides fairly without bias
+- Highlight key differences and similarities
+- Use passages from different sources to provide balanced insights`,
+
+      howto: `You are a helpful AI assistant that provides step-by-step guidance based on the user's browsing history.
+
+IMPORTANT INSTRUCTIONS:
+- Only use information from the provided context
+- Structure your answer as clear, actionable steps when appropriate
+- Combine information from multiple sources if they complement each other
+- Cite sources: "According to [Page Title], the process involves..."
+- If steps are incomplete or unclear, acknowledge what information is missing
+- Prioritize passages that contain procedural or instructional content
+- Be practical and clear in your explanations`,
+
+      navigation: `You are a helpful AI assistant that helps users find pages they've previously visited.
+
+IMPORTANT INSTRUCTIONS:
+- Focus on helping the user find the specific page they're looking for
+- Mention the page title and URL clearly
+- Include relevant context about when they visited or what the page was about
+- If multiple pages match, list them with distinguishing details
+- Be direct - the user is trying to navigate back to something specific`,
+
+      general: `You are a helpful AI assistant that answers questions based on the user's browsing history.
+
+IMPORTANT INSTRUCTIONS:
+- Only use information from the provided context from previously visited pages
+- Passages marked [High Quality] contain more reliable information
+- If the context doesn't contain enough information, say so honestly
+- Cite sources by mentioning the page title: "According to [Page Title]..."
+- Be concise but thorough
+- If multiple pages contain relevant information, synthesize them into a coherent answer
+- Acknowledge any limitations in the available information`,
+    };
+
+    return prompts[intentType] || prompts.general;
   }
 }
 

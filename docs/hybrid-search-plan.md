@@ -160,7 +160,7 @@ case 'SEARCH_QUERY':
 
       sendResponse({ success: true, results });
     } catch (error) {
-      console.error('[Memex] Search failed:', error);
+      console.error('[Recall] Search failed:', error);
       sendResponse({ success: false, error: (error as Error).message });
     }
   })();

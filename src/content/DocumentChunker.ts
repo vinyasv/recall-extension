@@ -164,8 +164,20 @@ export class DocumentChunker {
       '.comments', '.related-posts', '.menu'
     ];
 
-    const className = element.className.toLowerCase();
-    const id = element.id.toLowerCase();
+    // Handle SVG elements and other edge cases where className is not a string
+    let className = '';
+    let id = '';
+
+    try {
+      className = typeof element.className === 'string'
+        ? element.className.toLowerCase()
+        : String(element.className || '').toLowerCase();
+      id = typeof element.id === 'string'
+        ? element.id.toLowerCase()
+        : String(element.id || '').toLowerCase();
+    } catch (e) {
+      // Ignore errors from accessing className/id on unusual elements
+    }
 
     return (
       unwantedTags.includes(tagName) ||

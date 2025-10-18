@@ -124,7 +124,7 @@ export class OffscreenManager {
         justification: 'Chrome AI Summarizer API requires DOM context and user activation state'
       });
 
-      console.log('[OffscreenManager] ✅ Offscreen document created');
+      console.log('[OffscreenManager] Offscreen document created');
       this.isOffscreenOpen = true;
 
       // Wait for ready signal
@@ -151,7 +151,7 @@ export class OffscreenManager {
         if (message.type === 'OFFSCREEN_SUMMARIZER_READY') {
           clearTimeout(timeout);
           chrome.runtime.onMessage.removeListener(messageHandler);
-          console.log('[OffscreenManager] ✅ Offscreen document ready');
+          console.log('[OffscreenManager] Offscreen document ready');
           resolve();
         }
       };

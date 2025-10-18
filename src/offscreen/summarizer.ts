@@ -104,7 +104,7 @@ class OffscreenSummarizer {
       if (availability === 'available' || availability === 'downloadable') {
         this.isAvailable = true;
         this.updateStatus('Chrome Summarizer API ready', 'ready');
-        console.log('[Offscreen Summarizer] ✅ Chrome Summarizer API is available');
+        console.log('[Offscreen Summarizer] Chrome Summarizer API is available');
       } else {
         this.updateStatus(`API not available: ${availability}`, 'error');
         console.warn('[Offscreen Summarizer] Summarizer not available:', availability);
@@ -119,7 +119,7 @@ class OffscreenSummarizer {
 
         if (promptAvailability === 'available' || promptAvailability === 'downloadable') {
           this.promptApiAvailable = true;
-          console.log('[Offscreen Summarizer] ✅ Prompt API is available');
+          console.log('[Offscreen Summarizer] Prompt API is available');
         } else {
           console.warn('[Offscreen Summarizer] Prompt API not available:', promptAvailability);
         }
@@ -232,7 +232,7 @@ class OffscreenSummarizer {
 
         const processingTime = Date.now() - startTime;
 
-        console.log(`[Offscreen Summarizer] ✅ Request ${request.id} completed in ${processingTime}ms`);
+        console.log(`[Offscreen Summarizer] Request ${request.id} completed in ${processingTime}ms`);
         console.log(`[Offscreen Summarizer] Summary length: ${trimmed.length} chars`);
 
         return {
@@ -254,7 +254,7 @@ class OffscreenSummarizer {
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      console.error(`[Offscreen Summarizer] ❌ Request ${request.id} failed:`, error);
+      console.error(`[Offscreen Summarizer] Request ${request.id} failed:`, error);
 
       return {
         id: request.id,
@@ -398,7 +398,7 @@ class OffscreenSummarizer {
 
         const processingTime = Date.now() - startTime;
 
-        console.log(`[Offscreen Summarizer] ✅ Prompt request ${request.id} completed in ${processingTime}ms`);
+        console.log(`[Offscreen Summarizer] Prompt request ${request.id} completed in ${processingTime}ms`);
 
         return {
           id: request.id,
@@ -418,7 +418,7 @@ class OffscreenSummarizer {
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      console.error(`[Offscreen Summarizer] ❌ Prompt request ${request.id} failed:`, error);
+      console.error(`[Offscreen Summarizer] Prompt request ${request.id} failed:`, error);
 
       return {
         id: request.id,
@@ -466,7 +466,7 @@ class OffscreenSummarizer {
           console.error('[Offscreen Summarizer] Failed to send completion:', error);
         });
 
-        console.log(`[Offscreen Summarizer] ✅ Streaming prompt request ${request.id} completed`);
+        console.log(`[Offscreen Summarizer] Streaming prompt request ${request.id} completed`);
 
       } finally {
         try {
@@ -478,7 +478,7 @@ class OffscreenSummarizer {
       }
 
     } catch (error) {
-      console.error(`[Offscreen Summarizer] ❌ Streaming prompt request ${request.id} failed:`, error);
+      console.error(`[Offscreen Summarizer] Streaming prompt request ${request.id} failed:`, error);
 
       // Send error signal
       chrome.runtime.sendMessage({

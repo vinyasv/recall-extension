@@ -17,6 +17,8 @@ export default defineConfig({
       input: {
         // Include offscreen document as a separate entry
         offscreen: resolve(__dirname, 'src/offscreen/summarizer.html'),
+        // Include eval bridge page
+        evalBridge: resolve(__dirname, 'src/ui/eval-bridge.html'),
       },
     },
   },

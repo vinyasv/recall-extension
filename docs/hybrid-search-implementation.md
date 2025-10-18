@@ -6,7 +6,7 @@
 
 ## Overview
 
-Successfully implemented a **hybrid search system** that combines semantic search (vector embeddings) with keyword search (TF-IDF) using Reciprocal Rank Fusion (RRF) to provide best-in-class search results for the Memex browser extension.
+Successfully implemented a **hybrid search system** that combines semantic search (vector embeddings) with keyword search (TF-IDF) using Reciprocal Rank Fusion (RRF) to provide best-in-class search results for the Recall browser extension.
 
 **Privacy-First Architecture**: All processing happens **100% on-device** using:
 - **Chrome's built-in Summarizer API** (Gemini Nano) for generating page summaries with contextual understanding
@@ -335,7 +335,7 @@ Potential improvements identified (not implemented):
 
 ## Privacy Benefits Recap
 
-This hybrid search implementation strengthens the **privacy-first** foundation of Memex:
+This hybrid search implementation strengthens the **privacy-first** foundation of Recall:
 
 ### Zero Data Exfiltration
 - **✅ All summarization**: Chrome's built-in Summarizer API (Gemini Nano on-device)
@@ -346,7 +346,7 @@ This hybrid search implementation strengthens the **privacy-first** foundation o
 
 ### Comparison with Cloud-Based Alternatives
 
-| Feature | Memex (This App) | Cloud Alternatives |
+| Feature | Recall (This App) | Cloud Alternatives |
 |---------|------------------|-------------------|
 | **Summarization** | On-device (Gemini Nano) | External API calls 💰 |
 | **Embeddings** | On-device (Transformers.js) | External API calls 💰 |

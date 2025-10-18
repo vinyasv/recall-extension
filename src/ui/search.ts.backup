@@ -1,8 +1,8 @@
 /**
- * Memex Search UI Controller - Phase 4 Enhanced
+ * Recall Search UI Controller - Phase 4 Enhanced
  */
 
-console.log('[Memex] Search UI initialized');
+console.log('[Recall] Search UI initialized');
 
 // DOM Elements
 const searchInput = document.getElementById('searchInput') as HTMLInputElement;
@@ -23,7 +23,7 @@ let lastQuery: string = '';
  * Initialize the UI
  */
 async function initialize(): Promise<void> {
-  console.log('[Memex] Initializing search UI...');
+  console.log('[Recall] Initializing search UI...');
 
   // Load database stats
   await loadStats();
@@ -62,7 +62,7 @@ async function loadStats(): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('[Memex] Failed to load stats:', error);
+    console.error('[Recall] Failed to load stats:', error);
   }
 }
 
@@ -136,7 +136,7 @@ clearButton.addEventListener('click', () => {
  * Perform semantic search
  */
 async function performSearch(query: string): Promise<void> {
-  console.log('[Memex] Searching for:', query);
+  console.log('[Recall] Searching for:', query);
   lastQuery = query;
 
   emptyState.style.display = 'none';
@@ -179,7 +179,7 @@ async function performSearch(query: string): Promise<void> {
     renderResults(results, duration);
 
   } catch (error) {
-    console.error('[Memex] Search failed:', error);
+    console.error('[Recall] Search failed:', error);
     renderError(error as Error);
   }
 }
