@@ -1080,16 +1080,19 @@ async function clearHistory(): Promise<void> {
 
 // Helper functions
 function groupByDate(pages: any[]): Record<string, any[]> {
+  // Sort pages by timestamp descending (most recent first)
+  const sortedPages = [...pages].sort((a, b) => b.timestamp - a.timestamp);
+
   const grouped: Record<string, any[]> = {};
-  
-  pages.forEach(page => {
+
+  sortedPages.forEach(page => {
     const date = formatDate(page.timestamp);
     if (!grouped[date]) {
       grouped[date] = [];
     }
     grouped[date].push(page);
   });
-  
+
   return grouped;
 }
 
