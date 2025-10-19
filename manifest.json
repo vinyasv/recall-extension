@@ -46,7 +46,7 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["*.wasm", "*.onnx"],
+      "resources": ["*.wasm", "*.onnx", "Background@2x.png", "send.svg"],
       "matches": ["<all_urls>"]
     }
   ],

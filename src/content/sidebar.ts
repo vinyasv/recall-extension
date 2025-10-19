@@ -55,10 +55,24 @@ export function createSidebar(): void {
         <div class="rewind-tab-content rewind-tab-content-active" id="rewindAskContent">
           <div class="rewind-chat-messages" id="rewindChatMessages">
             <div class="rewind-chat-empty">
-              <div class="rewind-chat-empty-text">Ask a question about your history</div>
+              <div class="rewind-chat-empty-title">Your personal AI, with 100% privacy.</div>
+              <div class="rewind-chat-empty-subtitle">Rewind indexes your history on-device. Ask a question to get answers, not just links.</div>
+              <div class="rewind-chat-empty-input-container">
+                <input
+                  type="text"
+                  class="rewind-chat-empty-input"
+                  id="rewindChatEmptyInput"
+                  placeholder="Ask a question about your history"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button class="rewind-chat-empty-send-btn" id="rewindChatEmptySendBtn">
+                  <img src="" id="rewindSendIcon" alt="Send" />
+                </button>
+              </div>
             </div>
           </div>
-          <div class="rewind-chat-input-container">
+          <div class="rewind-chat-input-container" style="display: none;">
             <input
               type="text"
               class="rewind-chat-input"
@@ -68,9 +82,7 @@ export function createSidebar(): void {
               spellcheck="false"
             />
             <button class="rewind-chat-send-btn" id="rewindChatSendBtn">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2 8L14 8M14 8L8 2M14 8L8 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
+              <img src="" class="rewind-send-icon-img" alt="Send" />
             </button>
           </div>
         </div>
@@ -127,6 +139,15 @@ export function createSidebar(): void {
 
   // Set up event listeners
   setupEventListeners();
+
+  // Set send icon URLs
+  const sendIconUrl = chrome.runtime.getURL('send.svg');
+  const sendIcon = sidebarContainer.querySelector('#rewindSendIcon') as HTMLImageElement;
+  if (sendIcon) sendIcon.src = sendIconUrl;
+
+  const sendIcons = sidebarContainer.querySelectorAll('.rewind-send-icon-img') as NodeListOf<HTMLImageElement>;
+  sendIcons.forEach(icon => icon.src = sendIconUrl);
+
   loggers.sidebar.debug('Event listeners set up, sidebar ready!');
 }
 
@@ -142,6 +163,7 @@ function injectStyles(): void {
   loggers.sidebar.debug('Injecting sidebar styles...');
 
   try {
+    const backgroundUrl = chrome.runtime.getURL('Background@2x.png');
     const style = document.createElement('style');
     style.id = 'rewind-sidebar-styles';
     style.textContent = `
@@ -191,8 +213,8 @@ function injectStyles(): void {
       right: 20px;
       bottom: 20px;
       width: 400px;
-      background: #FFFFFF;
-      border-radius: 16px;
+      background: #FFFFFF url('${backgroundUrl}') center/cover no-repeat;
+      border-radius: 5px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 0 1px rgba(0, 0, 0, 0.1);
       transform: translateX(calc(100% + 40px));
       transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
@@ -345,7 +367,7 @@ function injectStyles(): void {
       position: relative;
       height: 40px;
       border: 1px solid #E5E5E5;
-      border-radius: 10px;
+      border-radius: 3px;
       background: #FFFFFF;
       transition: all 0.3s ease;
     }
@@ -580,17 +602,100 @@ function injectStyles(): void {
       flex: 1;
       display: flex;
       flex-direction: column;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
       padding: 40px 20px;
+      gap: 16px;
     }
 
-    .rewind-chat-empty-text {
+    .rewind-chat-empty-title {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 300;
+      font-size: 16px;
+      color: #000000;
+      text-align: left;
+      line-height: 1.4;
+      width: 100%;
+    }
+
+    .rewind-chat-empty-subtitle {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 300;
+      font-size: 10px;
+      color: rgba(0, 0, 0, 0.38);
+      text-align: left;
+      line-height: 1.6;
+      width: 100%;
+    }
+
+    .rewind-chat-empty-input-container {
+      display: flex;
+      gap: 0;
+      align-items: center;
+      width: 100%;
+      margin-top: 8px;
+      position: relative;
+      border: 1px solid #E5E5E5;
+      border-radius: 3px;
+      background: #FFFFFF;
+      height: 40px;
+      transition: all 0.3s ease;
+    }
+
+    .rewind-chat-empty-input-container:focus-within {
+      border-color: rgba(0, 0, 0, 0.2);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+
+    .rewind-chat-empty-input {
+      flex: 1;
+      height: 100%;
+      padding: 0 14px;
+      border: none;
+      background: transparent;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       font-weight: 400;
       font-size: 12px;
-      color: rgba(0, 0, 0, 0.5);
-      text-align: center;
+      color: #000000;
+      outline: none;
+    }
+
+    .rewind-chat-empty-input::placeholder {
+      color: rgba(0, 0, 0, 0.4);
+    }
+
+    .rewind-chat-empty-send-btn {
+      width: 40px;
+      height: 100%;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+      padding: 0;
+    }
+
+    .rewind-chat-empty-send-btn img {
+      width: 16px;
+      height: 16px;
+      opacity: 0.6;
+      transition: opacity 0.2s ease;
+    }
+
+    .rewind-chat-empty-send-btn:hover img {
+      opacity: 1;
+    }
+
+    .rewind-chat-empty-send-btn:active {
+      transform: scale(0.95);
+    }
+
+    .rewind-chat-empty-send-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.3;
     }
 
     .rewind-chat-message {
@@ -610,7 +715,7 @@ function injectStyles(): void {
     .rewind-chat-bubble {
       max-width: 85%;
       padding: 10px 14px;
-      border-radius: 12px;
+      border-radius: 3px;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       font-weight: 400;
       font-size: 12px;
@@ -619,12 +724,12 @@ function injectStyles(): void {
     }
 
     .rewind-chat-message-user .rewind-chat-bubble {
-      background: #000000;
-      color: #FFFFFF;
+      background: #FFFFFF;
+      color: #000000;
     }
 
     .rewind-chat-message-assistant .rewind-chat-bubble {
-      background: rgba(0, 0, 0, 0.05);
+      background: #FFFFFF;
       color: #000000;
     }
 
@@ -693,28 +798,32 @@ function injectStyles(): void {
     .rewind-chat-input-container {
       flex-shrink: 0;
       display: flex;
-      gap: 8px;
+      gap: 0;
       align-items: center;
+      position: relative;
+      border: 1px solid #E5E5E5;
+      border-radius: 3px;
+      background: #FFFFFF;
+      height: 40px;
+      transition: all 0.3s ease;
+    }
+
+    .rewind-chat-input-container:focus-within {
+      border-color: rgba(0, 0, 0, 0.2);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
 
     .rewind-chat-input {
       flex: 1;
-      height: 40px;
+      height: 100%;
       padding: 0 14px;
-      border: 1px solid #E5E5E5;
-      border-radius: 10px;
-      background: #FFFFFF;
+      border: none;
+      background: transparent;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       font-weight: 400;
       font-size: 12px;
       color: #000000;
       outline: none;
-      transition: all 0.3s ease;
-    }
-
-    .rewind-chat-input:focus {
-      border-color: rgba(0, 0, 0, 0.2);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
 
     .rewind-chat-input::placeholder {
@@ -723,21 +832,29 @@ function injectStyles(): void {
 
     .rewind-chat-send-btn {
       width: 40px;
-      height: 40px;
+      height: 100%;
       border: none;
-      background: #000000;
-      border-radius: 10px;
+      background: transparent;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #FFFFFF;
       transition: all 0.2s ease;
       flex-shrink: 0;
+      padding: 0;
     }
 
-    .rewind-chat-send-btn:hover {
-      background: rgba(0, 0, 0, 0.85);
+    .rewind-chat-send-btn img,
+    .rewind-send-icon-img {
+      width: 16px;
+      height: 16px;
+      opacity: 0.6;
+      transition: opacity 0.2s ease;
+    }
+
+    .rewind-chat-send-btn:hover img,
+    .rewind-send-icon-img:hover {
+      opacity: 1;
     }
 
     .rewind-chat-send-btn:active {
@@ -745,8 +862,8 @@ function injectStyles(): void {
     }
 
     .rewind-chat-send-btn:disabled {
-      background: rgba(0, 0, 0, 0.2);
       cursor: not-allowed;
+      opacity: 0.3;
     }
 
     .rewind-chat-loading {
@@ -843,7 +960,7 @@ function setupEventListeners(): void {
   const clearBtn = sidebarContainer.querySelector('#rewindClearHistoryBtn');
   clearBtn?.addEventListener('click', clearHistory);
 
-  // Chat input and send button
+  // Chat input and send button (regular)
   const chatInput = sidebarContainer.querySelector('#rewindChatInput') as HTMLInputElement;
   const chatSendBtn = sidebarContainer.querySelector('#rewindChatSendBtn') as HTMLButtonElement;
 
@@ -861,6 +978,27 @@ function setupEventListeners(): void {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendChatMessage();
+    }
+  });
+
+  // Chat input and send button (empty state)
+  const chatEmptyInput = sidebarContainer.querySelector('#rewindChatEmptyInput') as HTMLInputElement;
+  const chatEmptySendBtn = sidebarContainer.querySelector('#rewindChatEmptySendBtn') as HTMLButtonElement;
+
+  const sendEmptyChatMessage = () => {
+    const question = chatEmptyInput.value.trim();
+    if (question) {
+      askQuestion(question);
+      chatEmptyInput.value = '';
+    }
+  };
+
+  chatEmptySendBtn?.addEventListener('click', sendEmptyChatMessage);
+
+  chatEmptyInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendEmptyChatMessage();
     }
   });
 }
@@ -1156,13 +1294,17 @@ async function askQuestion(question: string): Promise<void> {
   const chatMessages = sidebarContainer?.querySelector('#rewindChatMessages');
   const chatInput = sidebarContainer?.querySelector('#rewindChatInput') as HTMLInputElement;
   const chatSendBtn = sidebarContainer?.querySelector('#rewindChatSendBtn') as HTMLButtonElement;
+  const chatInputContainer = sidebarContainer?.querySelector('.rewind-chat-input-container') as HTMLElement;
 
   if (!chatMessages) return;
 
-  // Remove empty state if present
+  // Remove empty state if present and show regular chat input
   const emptyState = chatMessages.querySelector('.rewind-chat-empty');
   if (emptyState) {
     emptyState.remove();
+    if (chatInputContainer) {
+      chatInputContainer.style.display = 'flex';
+    }
   }
 
   // Add user message
@@ -1211,9 +1353,9 @@ async function askQuestion(question: string): Promise<void> {
     // Remove loading indicator
     loadingEl.remove();
 
-    if (response && response.success) {
+    if (response && response.success && response.result) {
       // Add assistant message with answer
-      addChatMessage('assistant', response.answer, response.sources);
+      addChatMessage('assistant', response.result.answer, response.result.sources);
     } else {
       throw new Error(response?.error || 'Failed to get answer');
     }

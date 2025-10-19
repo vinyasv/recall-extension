@@ -103,7 +103,7 @@ export class RAGController {
     const passages = await passageRetriever.retrieve(question, {
       topK: intentConfig.topK,
       minSimilarity: opts.minSimilarity,
-      maxPassagesPerPage: 3,
+      maxPassagesPerPage: intentConfig.maxPassagesPerPage,
       maxPagesPerDomain: intentConfig.diversityRequired ? 2 : 3,
       qualityWeight: 0.3,
     });
@@ -125,7 +125,7 @@ export class RAGController {
     }
 
     // Step 3: Build context from passages
-    const context = this._buildContextFromPassages(passages, opts.maxContextLength, intent);
+    const context = this._buildContextFromPassages(passages, intentConfig.maxContextLength, intent);
 
     loggers.ragController.debug(`Built context with ${context.length} characters`);
 
@@ -217,7 +217,7 @@ export class RAGController {
     const passages = await passageRetriever.retrieve(question, {
       topK: intentConfig.topK,
       minSimilarity: opts.minSimilarity,
-      maxPassagesPerPage: 3,
+      maxPassagesPerPage: intentConfig.maxPassagesPerPage,
       maxPagesPerDomain: intentConfig.diversityRequired ? 2 : 3,
       qualityWeight: 0.3,
     });
@@ -238,7 +238,7 @@ export class RAGController {
     }
 
     // Step 3: Build context
-    const context = this._buildContextFromPassages(passages, opts.maxContextLength, intent);
+    const context = this._buildContextFromPassages(passages, intentConfig.maxContextLength, intent);
 
     // Step 4: Stream answer generation
     const generationStartTime = Date.now();
@@ -302,17 +302,8 @@ export class RAGController {
       const [_pageId, pagePassages] = sources[i];
       const firstPassage = pagePassages[0];
 
-      // Quality indicator for the passage
-      const quality = firstPassage.passage.quality;
-      const qualityLabel =
-        quality >= 0.7
-          ? '[High Quality]'
-          : quality >= 0.4
-          ? '[Medium Quality]'
-          : '[Lower Quality]';
-
-      // Format: [Source N] Title (quality)
-      const sourceHeader = `[Source ${i + 1}] ${firstPassage.pageTitle} ${qualityLabel}\n`;
+      // Format: [Source N] Title
+      const sourceHeader = `[Source ${i + 1}] ${firstPassage.pageTitle}\n`;
       const sourceUrl = `URL: ${firstPassage.pageUrl}\n`;
 
       // Add temporal metadata for LLM reasoning about recency and frequency
@@ -332,12 +323,7 @@ export class RAGController {
 
       // Combine passages from this page
       const passageTexts = pagePassages
-        .map((p) => {
-          const passageQuality = p.passage.quality;
-          const label =
-            passageQuality >= 0.7 ? '[★★★]' : passageQuality >= 0.4 ? '[★★]' : '[★]';
-          return `${label} ${p.passage.text.trim()}`;
-        })
+        .map((p) => p.passage.text.trim())
         .join('\n\n');
 
       const sourceContent = passageTexts + '\n\n';

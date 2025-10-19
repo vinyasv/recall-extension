@@ -91,34 +91,44 @@ export class QueryIntentClassifier {
   // Intent-specific configurations
   private readonly intentConfigs: Record<string, IntentConfig> = {
     factual: {
-      topK: 5,
+      topK: 3,
       minQuality: 0.6,
       diversityRequired: false,
       preferRecent: false,
+      maxPassagesPerPage: 2,
+      maxContextLength: 3000,
     },
     comparison: {
-      topK: 8,
+      topK: 4,
       minQuality: 0.5,
       diversityRequired: true,
       preferRecent: false,
+      maxPassagesPerPage: 2,
+      maxContextLength: 4000,
     },
     howto: {
-      topK: 6,
+      topK: 4,
       minQuality: 0.5,
       diversityRequired: false,
       preferRecent: true,
+      maxPassagesPerPage: 2,
+      maxContextLength: 3500,
     },
     navigation: {
-      topK: 10,
+      topK: 3,
       minQuality: 0.3,
       diversityRequired: false,
       preferRecent: true,
+      maxPassagesPerPage: 1,
+      maxContextLength: 2000,
     },
     general: {
-      topK: 5,
+      topK: 3,
       minQuality: 0.5,
       diversityRequired: false,
       preferRecent: false,
+      maxPassagesPerPage: 2,
+      maxContextLength: 3000,
     },
   };
 

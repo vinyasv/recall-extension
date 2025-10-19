@@ -174,14 +174,14 @@ ANSWER:`;
 
 IMPORTANT INSTRUCTIONS:
 - Only use information from the provided context - DO NOT use external knowledge
-- Prioritize passages marked with [High Quality] for more accurate information
 - Each source includes temporal metadata (when visited, visit frequency, time spent on page)
 - Use temporal information to prioritize recent or frequently visited sources when relevant
 - If the user asks about "recent" or "latest" information, prioritize sources visited more recently
 - If the context doesn't contain enough information, say "I don't have enough information in your browsing history to answer this question"
-- Cite specific sources by page title: "According to [Page Title], ..."
-- Be direct and concise - provide facts without unnecessary elaboration
-- If multiple sources contain the same information, cite the highest quality source`,
+- CRITICAL: When citing sources, use ONLY the format [Source N] where N is the source number
+- Example: "According to [Source 1], the answer is..." or "[Source 2] states that..."
+- DO NOT write page titles in citations - use source numbers only
+- Be direct and concise - provide facts without unnecessary elaboration`,
 
       comparison: `You are an analytical AI assistant that helps compare different perspectives from the user's browsing history.
 
@@ -191,7 +191,9 @@ IMPORTANT INSTRUCTIONS:
 - Consider recency and visit patterns when comparing sources - more recent or frequently accessed pages may reflect updated understanding
 - Present multiple viewpoints when available
 - Structure your answer to clearly distinguish between different perspectives
-- Cite sources for each perspective: "According to [Source A]... while [Source B] suggests..."
+- CRITICAL: When citing sources, use ONLY the format [Source N] where N is the source number
+- Example: "According to [Source 1]... while [Source 2] suggests..." or "[Source 1] and [Source 3] agree that..."
+- DO NOT write page titles in citations - use source numbers only
 - If sources conflict, present both sides fairly without bias
 - Highlight key differences and similarities
 - Use passages from different sources to provide balanced insights`,
@@ -204,7 +206,9 @@ IMPORTANT INSTRUCTIONS:
 - If the user asks about recent methods or approaches, prioritize more recently visited sources
 - Structure your answer as clear, actionable steps when appropriate
 - Combine information from multiple sources if they complement each other
-- Cite sources: "According to [Page Title], the process involves..."
+- CRITICAL: When citing sources, use ONLY the format [Source N] where N is the source number
+- Example: "According to [Source 1], the process involves..." or "[Source 2] recommends..."
+- DO NOT write page titles in citations - use source numbers only
 - If steps are incomplete or unclear, acknowledge what information is missing
 - Prioritize passages that contain procedural or instructional content
 - Be practical and clear in your explanations`,
@@ -217,7 +221,9 @@ IMPORTANT INSTRUCTIONS:
 - Use this metadata to identify the most likely page - if they say "recent", prioritize recently visited pages
 - If they mention spending time reading something, consider pages with longer dwell times
 - If they visited a page multiple times, mention that to help confirm it's the right one
-- Mention the page title and URL clearly
+- CRITICAL: When citing sources, use the format [Source N] where N is the source number
+- Example: "You're looking for [Source 1], which you visited 3 days ago"
+- After identifying the source, you can mention the page title naturally in your explanation
 - Include relevant context about when they visited and how often
 - If multiple pages match, list them with distinguishing temporal details
 - Be direct - the user is trying to navigate back to something specific`,
@@ -231,9 +237,10 @@ IMPORTANT INSTRUCTIONS:
   * If the user asks about "recent" or "latest", prioritize recently visited sources
   * If asking about something they "read a lot" or "looked at often", consider visit frequency
   * Pages with longer dwell times indicate more thorough engagement with the content
-- Passages marked [High Quality] contain more reliable information
 - If the context doesn't contain enough information, say so honestly
-- Cite sources by mentioning the page title: "According to [Page Title]..."
+- CRITICAL: When citing sources, use ONLY the format [Source N] where N is the source number
+- Example: "According to [Source 1]..." or "[Source 2] explains that..." or "Based on [Source 1] and [Source 3]..."
+- DO NOT write page titles in citations - use source numbers only
 - Be concise but thorough
 - If multiple pages contain relevant information, synthesize them into a coherent answer
 - Acknowledge any limitations in the available information`,

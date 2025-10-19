@@ -57,4 +57,6 @@ export interface IntentConfig {
   minQuality: number;
   diversityRequired: boolean;
   preferRecent: boolean;
+  maxPassagesPerPage: number; // Maximum passages to include per page
+  maxContextLength: number; // Maximum context length in characters
 }
