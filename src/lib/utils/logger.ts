@@ -24,21 +24,23 @@ export class Logger {
   }
 
   /**
-   * Log info message (always logged)
+   * Log info message (only in development)
    */
   info(message: string, ...args: any[]): void {
-    console.log(`[${this.context}] ${message}`, ...args);
+    if (ENV_CONFIG.VERBOSE_LOGGING) {
+      console.log(`[${this.context}] ${message}`, ...args);
+    }
   }
 
   /**
-   * Log warning
+   * Log warning (always logged - important for troubleshooting)
    */
   warn(message: string, ...args: any[]): void {
     console.warn(`[${this.context}] ${message}`, ...args);
   }
 
   /**
-   * Log error
+   * Log error (always logged - critical for debugging)
    */
   error(message: string, ...args: any[]): void {
     console.error(`[${this.context}] ${message}`, ...args);
@@ -117,4 +119,12 @@ export const loggers = {
   background: createLogger('Background'),
   promptService: createLogger('PromptService'),
   ragController: createLogger('RAGController'),
+  tabMonitor: createLogger('TabMonitor'),
+  indexingQueue: createLogger('IndexingQueue'),
+  offscreenManager: createLogger('OffscreenManager'),
+  summarizerService: createLogger('SummarizerService'),
+  sidebar: createLogger('Rewind Sidebar'),
+  popup: createLogger('Popup'),
+  contentScript: createLogger('ContentScript'),
+  offscreenSummarizer: createLogger('OffscreenSummarizer'),
 } as const;

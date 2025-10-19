@@ -45,7 +45,7 @@ export interface PageMetadata {
   /** Page title */
   title: string;
 
-  /** Page-level embedding (title + concatenated passages) */
+  /** Page-level embedding (title + top passages, used for Phase 1 filtering) */
   embedding: Float32Array;
 
   /** Visit timestamp (ms since epoch) */
@@ -74,13 +74,13 @@ export interface PageRecord {
   /** Raw extracted text content */
   content: string;
 
-  /** AI-generated search-optimized summary */
+  /** Display summary (AI-generated when available, otherwise top passages) */
   summary: string;
 
-  /** Array of semantic passages from the page */
+  /** Array of semantic passages from the page (PRIMARY SEARCH SOURCE) */
   passages: Passage[];
 
-  /** Page-level embedding (title + summary + concatenated passages) */
+  /** Page-level embedding (title + top passages, used as fallback) */
   embedding: Float32Array;
 
   /** Visit timestamp (ms since epoch) */

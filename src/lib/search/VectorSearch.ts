@@ -109,9 +109,23 @@ function calculateRelevance(
 }
 
 /**
- * Perform k-NN semantic search with two-phase lazy loading
- * Phase 1: Fast search using page-level metadata only
- * Phase 2: Load full passages for top candidates and re-rank
+ * Perform k-NN semantic search with two-phase passage-first architecture
+ *
+ * Phase 1: Fast filtering using page-level metadata
+ * - Uses page-level embeddings (title + top passages) for initial candidate selection
+ * - Applies similarity threshold and relevance scoring
+ * - Selects top candidates for detailed analysis (2x the requested k)
+ *
+ * Phase 2: Passage-level re-ranking (PRIMARY SEARCH)
+ * - Loads full page records with passage embeddings
+ * - Compares query against each passage embedding
+ * - Uses best passage similarity as primary ranking signal
+ * - Boosts pages with multiple high-quality passage matches
+ * - Falls back to page-level embedding if no passage embeddings available
+ *
+ * This approach balances speed (Phase 1 metadata filtering) with accuracy
+ * (Phase 2 granular passage matching) following Chrome's proven architecture.
+ *
  * @param queryEmbedding Query embedding vector
  * @param options Search options
  * @returns Array of search results sorted by relevance
@@ -196,33 +210,43 @@ export async function searchSimilar(
       continue;
     }
 
-    let maxSimilarity = candidate.similarity; // Start with page-level similarity
+    let maxPassageSimilarity = 0;
     let passageMatches = 0;
+    let totalPassageScore = 0;
 
-    // Check passage-level similarities for better granularity
+    // Check passage-level similarities for better granularity (PRIMARY SEARCH)
     if (fullPage.passages && fullPage.passages.length > 0) {
       for (const passage of fullPage.passages) {
         if (passage.embedding) {
           const passageSimilarity = cosineSimilarity(queryEmbedding, passage.embedding);
 
-          // Note: Don't apply threshold filtering here - let passage-level results
-        // be considered for re-ranking even if below threshold. The main threshold
-        // filtering in Phase 1 is sufficient for quality control.
+          // Track best passage match
+          maxPassageSimilarity = Math.max(maxPassageSimilarity, passageSimilarity);
 
-          maxSimilarity = Math.max(maxSimilarity, passageSimilarity);
-          passageMatches++;
+          // Weight by passage quality for aggregate scoring
+          if (passageSimilarity > opts.minSimilarity) {
+            totalPassageScore += passageSimilarity * passage.quality;
+            passageMatches++;
+          }
         }
       }
     }
 
-    // Calculate final relevance score with passage boost
-    const finalRelevanceScore = calculateRelevance(maxSimilarity, fullPage, opts, DEFAULT_RANKING_CONFIG);
-    const passageBoost = passageMatches > 0 ? Math.log(passageMatches + 1) * 0.1 : 0;
+    // Use passage similarity if available, otherwise fall back to page-level
+    const primarySimilarity = maxPassageSimilarity > 0 ? maxPassageSimilarity : candidate.similarity;
+
+    // Calculate final relevance score
+    const baseRelevanceScore = calculateRelevance(primarySimilarity, fullPage, opts, DEFAULT_RANKING_CONFIG);
+
+    // Boost for multiple high-quality passage matches
+    const passageBoost = passageMatches > 0
+      ? (totalPassageScore / passageMatches) * Math.log(passageMatches + 1) * 0.15
+      : 0;
 
     finalResults.push({
       page: fullPage,
-      similarity: maxSimilarity,
-      relevanceScore: finalRelevanceScore + passageBoost,
+      similarity: primarySimilarity,
+      relevanceScore: baseRelevanceScore + passageBoost,
       searchMode: 'semantic',
     });
   }

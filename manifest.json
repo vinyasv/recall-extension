@@ -41,11 +41,6 @@
       "matches": ["<all_urls>"],
       "js": ["src/content/index.ts"],
       "run_at": "document_idle"
-    },
-    {
-      "matches": ["<all_urls>"],
-      "js": ["src/content/AIContentScript.ts"],
-      "run_at": "document_idle"
     }
   ],
 

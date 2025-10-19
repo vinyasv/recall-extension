@@ -1,4 +1,5 @@
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
+import { loggers } from '../utils/logger';
 
 /**
  * Service for generating text embeddings using all-MiniLM-L6-v2 model
@@ -33,7 +34,7 @@ export class EmbeddingService {
 
   private async _initialize(): Promise<void> {
     try {
-      console.log('[EmbeddingService] Initializing model:', this.MODEL_NAME);
+      loggers.embeddingService.debug('Initializing model:', this.MODEL_NAME);
 
       // Auto-detect environment
       // In Node.js: use 'cpu'
@@ -41,8 +42,8 @@ export class EmbeddingService {
       const isNode = typeof process !== 'undefined' && process.versions?.node;
       const device = isNode ? 'cpu' : 'wasm';
 
-      console.log('[EmbeddingService] Running in:', isNode ? 'Node.js' : 'Browser');
-      console.log('[EmbeddingService] Using device:', device);
+      loggers.embeddingService.debug('Running in:', isNode ? 'Node.js' : 'Browser');
+      loggers.embeddingService.debug('Using device:', device);
 
       // Transformers.js v3 types are complex, but this works at runtime
       this.extractor = (await pipeline(
@@ -54,9 +55,9 @@ export class EmbeddingService {
         } as any
       )) as any as FeatureExtractionPipeline;
 
-      console.log('[EmbeddingService] Model initialized successfully');
+      loggers.embeddingService.info('Model initialized successfully');
     } catch (error) {
-      console.error('[EmbeddingService] Failed to initialize model:', error);
+      loggers.embeddingService.error('Failed to initialize model:', error);
       this.initPromise = null;
       throw error;
     }
@@ -98,7 +99,7 @@ export class EmbeddingService {
 
       return embedding;
     } catch (error) {
-      console.error('[EmbeddingService] Failed to generate embedding:', error);
+      loggers.embeddingService.error('Failed to generate embedding:', error);
       throw error;
     }
   }

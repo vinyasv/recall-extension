@@ -54,24 +54,24 @@ export class VectorStore {
 
   private async _initialize(): Promise<void> {
     return new Promise((resolve, reject) => {
-      console.log('[VectorStore] Opening database:', this.config.name);
+      loggers.vectorStore.debug('Opening database:', this.config.name);
 
       const request = indexedDB.open(this.config.name, this.config.version);
 
       request.onerror = () => {
-        console.error('[VectorStore] Database open error:', request.error);
+        loggers.vectorStore.error('Database open error:', request.error);
         this.initPromise = null;
         reject(new Error(`Failed to open database: ${request.error}`));
       };
 
       request.onsuccess = () => {
         this.db = request.result;
-        console.log('[VectorStore] Database opened successfully');
+        loggers.vectorStore.debug('Database opened successfully');
         resolve();
       };
 
       request.onupgradeneeded = (event) => {
-        console.log('[VectorStore] Database upgrade needed');
+        loggers.vectorStore.debug('Database upgrade needed');
         const db = (event.target as IDBOpenDBRequest).result;
         const transaction = (event.target as IDBOpenDBRequest).transaction;
         const oldVersion = event.oldVersion;
@@ -88,10 +88,10 @@ export class VectorStore {
           objectStore.createIndex('dwellTime', 'dwellTime', { unique: false });
           objectStore.createIndex('lastAccessed', 'lastAccessed', { unique: false });
 
-          console.log('[VectorStore] Object store and indexes created');
+          loggers.vectorStore.debug('Object store and indexes created');
         } else if (oldVersion < 2) {
           // Upgrade to version 2: add passage support
-          console.log('[VectorStore] Upgrading to version 2 (passage support)');
+          loggers.vectorStore.debug('Upgrading to version 2 (passage support)');
 
           // Clear existing data since we're changing the schema significantly
           if (transaction) {
@@ -99,11 +99,11 @@ export class VectorStore {
             const clearRequest = objectStore.clear();
 
             clearRequest.onsuccess = () => {
-              console.log('[VectorStore] Cleared old data for passage migration');
+              loggers.vectorStore.debug('Cleared old data for passage migration');
             };
 
             clearRequest.onerror = () => {
-              console.error('[VectorStore] Failed to clear old data:', clearRequest.error);
+              loggers.vectorStore.error('Failed to clear old data:', clearRequest.error);
             };
           }
         }
@@ -137,7 +137,7 @@ export class VectorStore {
       };
 
       request.onerror = () => {
-        console.error('[VectorStore] Failed to add page:', request.error);
+        loggers.vectorStore.error('Failed to add page:', request.error);
         reject(new Error(`Failed to add page: ${request.error}`));
       };
     });
@@ -166,7 +166,7 @@ export class VectorStore {
       };
 
       request.onerror = () => {
-        console.error('[VectorStore] Failed to get page:', request.error);
+        loggers.vectorStore.error('Failed to get page:', request.error);
         reject(new Error(`Failed to get page: ${request.error}`));
       };
     });
@@ -196,7 +196,7 @@ export class VectorStore {
       };
 
       request.onerror = () => {
-        console.error('[VectorStore] Failed to get page by URL:', request.error);
+        loggers.vectorStore.error('Failed to get page by URL:', request.error);
         reject(new Error(`Failed to get page by URL: ${request.error}`));
       };
     });
@@ -222,7 +222,7 @@ export class VectorStore {
       };
 
       request.onerror = () => {
-        console.error('[VectorStore] Failed to get all page metadata:', request.error);
+        loggers.vectorStore.error('Failed to get all page metadata:', request.error);
         reject(new Error(`Failed to get all page metadata: ${request.error}`));
       };
     });
@@ -248,7 +248,7 @@ export class VectorStore {
       };
 
       request.onerror = () => {
-        console.error('[VectorStore] Failed to get all pages:', request.error);
+        loggers.vectorStore.error('Failed to get all pages:', request.error);
         reject(new Error(`Failed to get all pages: ${request.error}`));
       };
     });
@@ -286,7 +286,7 @@ export class VectorStore {
       };
 
       request.onerror = () => {
-        console.error('[VectorStore] Failed to update page:', request.error);
+        loggers.vectorStore.error('Failed to update page:', request.error);
         reject(new Error(`Failed to update page: ${request.error}`));
       };
     });
@@ -311,7 +311,7 @@ export class VectorStore {
       };
 
       request.onerror = () => {
-        console.error('[VectorStore] Failed to delete page:', request.error);
+        loggers.vectorStore.error('Failed to delete page:', request.error);
         reject(new Error(`Failed to delete page: ${request.error}`));
       };
     });
@@ -393,7 +393,7 @@ export class VectorStore {
       };
 
       request.onerror = () => {
-        console.error('[VectorStore] Failed to clear database:', request.error);
+        loggers.vectorStore.error('Failed to clear database:', request.error);
         reject(new Error(`Failed to clear database: ${request.error}`));
       };
     });
@@ -472,7 +472,7 @@ export class VectorStore {
       this.db.close();
       this.db = null;
       this.initPromise = null;
-      console.log('[VectorStore] Database closed');
+      loggers.vectorStore.debug('Database closed');
     }
   }
 }

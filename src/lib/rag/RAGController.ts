@@ -4,7 +4,7 @@
  */
 
 import { passageRetriever } from './PassageRetriever';
-import { queryIntentClassifier } from './QueryIntentClassifier';
+import { intentClassificationService } from './IntentClassificationService';
 import { promptService } from '../prompt/PromptService';
 import type { SearchResult } from '../search/types';
 import type { PromptOptions } from '../prompt/PromptService';
@@ -16,6 +16,8 @@ export interface RAGOptions {
   minSimilarity?: number; // Minimum similarity threshold (default: 0.3)
   maxContextLength?: number; // Maximum context length in chars (default: 8000)
   promptOptions?: PromptOptions;
+  useHybridIntent?: boolean; // Use hybrid intent classification (default: true)
+  intentConfidenceThreshold?: number; // Threshold for regex confidence (default: 0.7)
 }
 
 export interface RAGResult {
@@ -34,7 +36,31 @@ export class RAGController {
     topK: 5,
     minSimilarity: 0.3,
     maxContextLength: 8000,
+    useHybridIntent: true,
+    intentConfidenceThreshold: 0.7,
   };
+
+  private isInitialized: boolean = false;
+
+  /**
+   * Initialize the RAG controller
+   */
+  async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      return;
+    }
+
+    loggers.ragController.debug('Initializing RAG controller with hybrid intent classification...');
+
+    try {
+      await intentClassificationService.initialize();
+      this.isInitialized = true;
+      loggers.ragController.debug('RAG controller initialized');
+    } catch (error) {
+      loggers.ragController.error('Failed to initialize RAG controller:', error);
+      // Continue anyway - hybrid intent will fall back to regex-only
+    }
+  }
 
   /**
    * Answer a question using RAG (Retrieval-Augmented Generation)
@@ -46,13 +72,31 @@ export class RAGController {
     const startTime = Date.now();
     const opts = { ...this.DEFAULT_OPTIONS, ...options };
 
+    // Ensure initialized
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+
     loggers.ragController.debug('Answering question:', question);
 
-    // Step 1: Classify query intent
-    const intent = queryIntentClassifier.classifyQuery(question);
-    const intentConfig = queryIntentClassifier.getIntentConfig(intent.type);
+    // Step 1: Classify query intent using hybrid approach
+    const intentResult = opts.useHybridIntent
+      ? await intentClassificationService.classify(question, {
+          confidenceThreshold: opts.intentConfidenceThreshold,
+        })
+      : await intentClassificationService.classify(question, { forceRegex: true });
 
-    loggers.ragController.debug(`Query intent: ${intent.type} (confidence: ${intent.confidence.toFixed(2)})`);
+    const intent: QueryIntent = {
+      type: intentResult.type,
+      confidence: intentResult.confidence,
+      keywords: intentResult.keywords,
+    };
+
+    const intentConfig = intentClassificationService.getIntentConfig(intent.type);
+
+    loggers.ragController.debug(
+      `Query intent: ${intent.type} (confidence: ${intent.confidence.toFixed(2)}, method: ${intentResult.method}, latency: ${intentResult.latency}ms)`
+    );
 
     // Step 2: Retrieve relevant passages using intent-aware configuration
     const searchStartTime = Date.now();
@@ -146,11 +190,27 @@ export class RAGController {
     const startTime = Date.now();
     const opts = { ...this.DEFAULT_OPTIONS, ...options };
 
+    // Ensure initialized
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+
     loggers.ragController.debug('Answering question (streaming):', question);
 
-    // Step 1: Classify query intent
-    const intent = queryIntentClassifier.classifyQuery(question);
-    const intentConfig = queryIntentClassifier.getIntentConfig(intent.type);
+    // Step 1: Classify query intent using hybrid approach
+    const intentResult = opts.useHybridIntent
+      ? await intentClassificationService.classify(question, {
+          confidenceThreshold: opts.intentConfidenceThreshold,
+        })
+      : await intentClassificationService.classify(question, { forceRegex: true });
+
+    const intent: QueryIntent = {
+      type: intentResult.type,
+      confidence: intentResult.confidence,
+      keywords: intentResult.keywords,
+    };
+
+    const intentConfig = intentClassificationService.getIntentConfig(intent.type);
 
     // Step 2: Retrieve relevant passages
     const searchStartTime = Date.now();

@@ -3,7 +3,9 @@
  * Injects a beautiful sidebar into webpages for semantic search
  */
 
-console.log('[Rewind Sidebar] Initializing sidebar module...');
+import { loggers } from '../lib/utils/logger';
+
+loggers.sidebar.debug('Initializing sidebar module...');
 
 let sidebarOpen = false;
 let sidebarContainer: HTMLElement | null = null;
@@ -12,14 +14,14 @@ let sidebarContainer: HTMLElement | null = null;
  * Create and inject the sidebar overlay
  */
 export function createSidebar(): void {
-  console.log('[Rewind Sidebar] createSidebar() called');
+  loggers.sidebar.debug('createSidebar() called');
   
   if (sidebarContainer) {
-    console.log('[Rewind Sidebar] Sidebar already exists, skipping creation');
+    loggers.sidebar.debug('Sidebar already exists, skipping creation');
     return; // Already exists
   }
   
-  console.log('[Rewind Sidebar] Creating sidebar DOM elements...');
+  loggers.sidebar.debug('Creating sidebar DOM elements...');
 
   // Create sidebar container
   sidebarContainer = document.createElement('div');
@@ -107,25 +109,25 @@ export function createSidebar(): void {
   injectStyles();
 
   // Append to body
-  console.log('[Rewind Sidebar] Appending sidebar to document.body...');
+  loggers.sidebar.debug('Appending sidebar to document.body...');
   
   if (!document.body) {
-    console.error('[Rewind Sidebar] document.body not available yet!');
+    loggers.sidebar.error('document.body not available yet!');
     return;
   }
   
   try {
     document.body.appendChild(sidebarContainer);
-    console.log('[Rewind Sidebar] Sidebar successfully appended to DOM');
+    loggers.sidebar.debug('Sidebar successfully appended to DOM');
   } catch (error) {
-    console.error('[Rewind Sidebar] Error appending sidebar:', error);
+    loggers.sidebar.error('Error appending sidebar:', error);
     sidebarContainer = null;
     return;
   }
 
   // Set up event listeners
   setupEventListeners();
-  console.log('[Rewind Sidebar] Event listeners set up, sidebar ready!');
+  loggers.sidebar.debug('Event listeners set up, sidebar ready!');
 }
 
 /**
@@ -133,11 +135,11 @@ export function createSidebar(): void {
  */
 function injectStyles(): void {
   if (document.getElementById('rewind-sidebar-styles')) {
-    console.log('[Rewind Sidebar] Styles already injected, skipping');
+    loggers.sidebar.debug('Styles already injected, skipping');
     return;
   }
 
-  console.log('[Rewind Sidebar] Injecting sidebar styles...');
+  loggers.sidebar.debug('Injecting sidebar styles...');
 
   try {
     const style = document.createElement('style');
@@ -747,7 +749,7 @@ function injectStyles(): void {
   `;
 
     document.head.appendChild(style);
-    console.log('[Rewind Sidebar] Styles successfully injected');
+    loggers.sidebar.debug('Styles successfully injected');
   } catch (error) {
     console.error('[Rewind Sidebar] Error injecting styles:', error);
   }

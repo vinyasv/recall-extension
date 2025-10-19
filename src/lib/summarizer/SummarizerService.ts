@@ -4,6 +4,7 @@
  */
 
 import { offscreenManager } from '../../background/OffscreenManager';
+import { loggers } from '../utils/logger';
 
 /**
  * Summarizer service class
@@ -19,19 +20,19 @@ export class SummarizerService {
       return;
     }
 
-    console.log('[SummarizerService] Initializing with offscreen document support...');
+    loggers.summarizerService.debug('Initializing with offscreen document support...');
 
     // Ensure offscreen document is ready for AI processing
     try {
       await offscreenManager.ensureOffscreenOpen();
-      console.log('[SummarizerService] ✅ Offscreen document ready for summarization');
+      loggers.summarizerService.debug('✅ Offscreen document ready for summarization');
     } catch (error) {
-      console.warn('[SummarizerService] Failed to initialize offscreen document:', error);
+      loggers.summarizerService.warn('Failed to initialize offscreen document:', error);
       // We'll continue anyway and handle errors during summarization
     }
 
     this.isInitialized = true;
-    console.log('[SummarizerService] ✅ Initialized with offscreen document support');
+    loggers.summarizerService.debug('✅ Initialized with offscreen document support');
   }
 
   /**
@@ -39,14 +40,14 @@ export class SummarizerService {
    */
   private async _checkAIAvailabilityViaOffscreen(): Promise<boolean> {
     try {
-      console.log('[SummarizerService] Checking AI API availability via offscreen document...');
+      loggers.summarizerService.debug('Checking AI API availability via offscreen document...');
 
       const status = await offscreenManager.getStatus();
-      console.log('[SummarizerService] Offscreen status:', status);
+      loggers.summarizerService.debug('Offscreen status:', status);
 
       return status.available;
     } catch (error) {
-      console.warn('[SummarizerService] Failed to check AI availability:', error);
+      loggers.summarizerService.warn('Failed to check AI availability:', error);
       return false;
     }
   }
@@ -85,14 +86,14 @@ export class SummarizerService {
       : trimmedText;
 
     // Chrome Summarizer API via offscreen document (REQUIRED - no fallback)
-    console.log('[SummarizerService] Attempting Chrome Summarizer API via offscreen document (REQUIRED)...');
+    loggers.summarizerService.debug('Attempting Chrome Summarizer API via offscreen document (REQUIRED)...');
     const summary = await offscreenManager.summarizeText(inputText, url, title, maxLength);
 
     if (!summary || summary.length === 0) {
       throw new Error('Chrome Summarizer API returned empty summary. Ensure Chrome 138+ with Gemini Nano is installed.');
     }
 
-    console.log('[SummarizerService] ✅ Chrome Summarizer API successful via offscreen document');
+    loggers.summarizerService.debug('✅ Chrome Summarizer API successful via offscreen document');
     return summary;
   }
 
@@ -129,14 +130,14 @@ export class SummarizerService {
       : trimmedText;
 
     // Chrome Summarizer API via offscreen document (REQUIRED - no fallback)
-    console.log('[SummarizerService] Attempting Chrome Summarizer API via offscreen document (REQUIRED)...');
+    loggers.summarizerService.debug('Attempting Chrome Summarizer API via offscreen document (REQUIRED)...');
     const summary = await offscreenManager.summarizeText(inputText, '', '', maxLength);
 
     if (!summary || summary.length === 0) {
       throw new Error('Chrome Summarizer API returned empty summary. Ensure Chrome 138+ with Gemini Nano is installed.');
     }
 
-    console.log('[SummarizerService] ✅ Chrome Summarizer API successful via offscreen document');
+    loggers.summarizerService.debug('✅ Chrome Summarizer API successful via offscreen document');
     return summary;
   }
 

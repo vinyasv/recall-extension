@@ -3,6 +3,8 @@
  * Handles creation, lifecycle, and communication with offscreen summarizer
  */
 
+import { loggers } from '../lib/utils/logger';
+
 interface SummarizeRequest {
   id: string;
   text: string;
@@ -77,7 +79,7 @@ export class OffscreenManager {
           return; // It's still open and working
         }
       } catch (error) {
-        console.log('[OffscreenManager] Offscreen document not responding, reopening...');
+        loggers.offscreenManager.warn('Offscreen document not responding, reopening...');
         this.isOffscreenOpen = false;
         this.creationPromise = null;
       }
@@ -85,7 +87,7 @@ export class OffscreenManager {
 
     // If creation is in progress, wait for it
     if (this.creationPromise) {
-      console.log('[OffscreenManager] Offscreen creation already in progress, waiting...');
+      loggers.offscreenManager.debug('Offscreen creation already in progress, waiting...');
       await this.creationPromise;
       return;
     }
@@ -101,7 +103,7 @@ export class OffscreenManager {
    * Create offscreen document
    */
   private async createOffscreenDocument(): Promise<void> {
-    console.log('[OffscreenManager] Creating offscreen document...');
+    loggers.offscreenManager.debug('Creating offscreen document...');
 
     try {
       // Check if offscreen document already exists
@@ -112,7 +114,7 @@ export class OffscreenManager {
 
       const contexts = await existingContexts;
       if (contexts.length > 0) {
-        console.log('[OffscreenManager] Offscreen document already exists');
+        loggers.offscreenManager.debug('Offscreen document already exists');
         this.isOffscreenOpen = true;
         return;
       }
@@ -124,7 +126,7 @@ export class OffscreenManager {
         justification: 'Chrome AI Summarizer API requires DOM context and user activation state'
       });
 
-      console.log('[OffscreenManager] Offscreen document created');
+      loggers.offscreenManager.debug('Offscreen document created');
       this.isOffscreenOpen = true;
 
       // Wait for ready signal
@@ -151,7 +153,7 @@ export class OffscreenManager {
         if (message.type === 'OFFSCREEN_SUMMARIZER_READY') {
           clearTimeout(timeout);
           chrome.runtime.onMessage.removeListener(messageHandler);
-          console.log('[OffscreenManager] Offscreen document ready');
+          loggers.offscreenManager.debug('Offscreen document ready');
           resolve();
         }
       };
@@ -168,7 +170,7 @@ export class OffscreenManager {
       try {
         await chrome.offscreen.closeDocument();
         this.isOffscreenOpen = false;
-        console.log('[OffscreenManager] Offscreen document closed');
+        loggers.offscreenManager.debug('Offscreen document closed');
       } catch (error) {
         console.error('[OffscreenManager] Failed to close offscreen document:', error);
       }
@@ -225,7 +227,7 @@ export class OffscreenManager {
       // Store updated callbacks
       this.pendingRequests.set(requestId, { resolve: wrappedResolve, reject });
 
-      console.log(`[OffscreenManager] Sending summarization request: ${requestId}`);
+      loggers.offscreenManager.debug(`Sending summarization request: ${requestId}`);
 
       // Send request to offscreen document
       chrome.runtime.sendMessage({
@@ -249,7 +251,7 @@ export class OffscreenManager {
       this.pendingRequests.delete(response.id);
 
       if (response.success && response.summary) {
-        console.log(`[OffscreenManager] ✅ Request ${response.id} succeeded`);
+        loggers.offscreenManager.debug(`✅ Request ${response.id} succeeded`);
         callbacks.resolve(response.summary);
       } else {
         console.error(`[OffscreenManager] ❌ Request ${response.id} failed:`, response.error);
@@ -359,7 +361,7 @@ export class OffscreenManager {
       // Store updated callbacks
       this.pendingPromptRequests.set(requestId, { resolve: wrappedResolve, reject });
 
-      console.log(`[OffscreenManager] Sending prompt request: ${requestId}`);
+      loggers.offscreenManager.debug(`Sending prompt request: ${requestId}`);
 
       // Send request to offscreen document
       chrome.runtime.sendMessage({
@@ -413,7 +415,7 @@ export class OffscreenManager {
       timestamp: Date.now()
     };
 
-    console.log(`[OffscreenManager] Sending streaming prompt request: ${requestId}`);
+    loggers.offscreenManager.debug(`Sending streaming prompt request: ${requestId}`);
 
     try {
       await chrome.runtime.sendMessage({
@@ -459,7 +461,7 @@ export class OffscreenManager {
       this.pendingPromptRequests.delete(response.id);
 
       if (response.success && response.answer) {
-        console.log(`[OffscreenManager] ✅ Prompt request ${response.id} succeeded`);
+        loggers.offscreenManager.debug(`✅ Prompt request ${response.id} succeeded`);
         callbacks.resolve(response.answer);
       } else {
         console.error(`[OffscreenManager] ❌ Prompt request ${response.id} failed:`, response.error);

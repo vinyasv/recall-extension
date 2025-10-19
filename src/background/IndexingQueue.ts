@@ -3,6 +3,7 @@
  */
 
 import type { TabInfo } from './TabMonitor';
+import { loggers } from '../lib/utils/logger';
 
 export interface QueuedPage extends TabInfo {
   id: string;
@@ -25,13 +26,13 @@ export class IndexingQueue {
    * Initialize the queue from storage
    */
   async initialize(): Promise<void> {
-    console.log('[IndexingQueue] Initializing...');
+    loggers.indexingQueue.debug('Initializing...');
 
     // Load queue from chrome.storage.local
     const result = await chrome.storage.local.get(QUEUE_STORAGE_KEY);
     if (result[QUEUE_STORAGE_KEY]) {
       this.queue = result[QUEUE_STORAGE_KEY];
-      console.log('[IndexingQueue] Loaded', this.queue.length, 'items from storage');
+      loggers.indexingQueue.debug('Loaded', this.queue.length, 'items from storage');
 
       if (this.queue.length > 0) {
         const originalSize = this.queue.length;
@@ -56,7 +57,7 @@ export class IndexingQueue {
     const existingIndex = this.queue.findIndex((item) => item.url === tabInfo.url);
     if (existingIndex !== -1) {
       const existing = this.queue[existingIndex];
-      console.log(
+      loggers.indexingQueue.debug(
         '[IndexingQueue] Page already in queue:',
         tabInfo.url,
         '(attempts:',
@@ -76,7 +77,7 @@ export class IndexingQueue {
     this.queue.push(queuedPage);
     await this._saveQueue();
 
-    console.log('[IndexingQueue] Added page:', tabInfo.url, '(queue size:', this.queue.length, ')');
+    loggers.indexingQueue.debug('Added page:', tabInfo.url, '(queue size:', this.queue.length, ')');
   }
 
   /**
@@ -88,12 +89,12 @@ export class IndexingQueue {
       return null;
     }
 
-    console.log('[IndexingQueue] Fetching next item - queue size:', this.queue.length);
+    loggers.indexingQueue.debug('Fetching next item - queue size:', this.queue.length);
 
     // Filter out pages that have exceeded max attempts
     let eligible = this.queue.filter((page) => page.attempts < MAX_ATTEMPTS);
 
-    console.log('[IndexingQueue] Eligible items (attempts < 3):', eligible.length);
+    loggers.indexingQueue.debug('Eligible items (attempts < 3):', eligible.length);
 
     if (eligible.length === 0) {
       if (this.queue.length > 0) {
@@ -104,13 +105,13 @@ export class IndexingQueue {
         // Clear all failed items instead of resetting attempts
         this.queue = [];
         await this._saveQueue();
-        console.log('[IndexingQueue] Queue cleared of failed items');
+        loggers.indexingQueue.debug('[IndexingQueue] Queue cleared of failed items');
       }
       return null;
     }
 
     // Return the oldest queued page
-    console.log('[IndexingQueue] Returning next page:', eligible[0].url);
+    loggers.indexingQueue.debug('Returning next page:', eligible[0].url);
     return eligible[0];
   }
 
@@ -123,7 +124,7 @@ export class IndexingQueue {
       const page = this.queue[index];
       this.queue.splice(index, 1);
       await this._saveQueue();
-      console.log('[IndexingQueue] Completed:', page.url);
+      loggers.indexingQueue.debug('[IndexingQueue] Completed:', page.url);
     }
   }
 
@@ -184,7 +185,7 @@ export class IndexingQueue {
   async clear(): Promise<void> {
     this.queue = [];
     await this._saveQueue();
-    console.log('[IndexingQueue] Queue cleared');
+    loggers.indexingQueue.debug('Queue cleared');
   }
 
   /**

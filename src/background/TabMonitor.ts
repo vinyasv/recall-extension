@@ -2,6 +2,8 @@
  * TabMonitor - Tracks page visits and dwell time for automatic indexing
  */
 
+import { loggers } from '../lib/utils/logger';
+
 export interface TabInfo {
   url: string;
   title: string;
@@ -40,7 +42,7 @@ export class TabMonitor {
    * Initialize the tab monitor
    */
   async initialize(onIndexTrigger: IndexTriggerCallback): Promise<void> {
-    console.log('[TabMonitor] Initializing...');
+    loggers.tabMonitor.debug('Initializing...');
 
     this.onIndexTrigger = onIndexTrigger;
 
@@ -53,7 +55,7 @@ export class TabMonitor {
       this.activeTabId = activeTab.id;
     }
 
-    console.log('[TabMonitor] Initialized successfully - pages will be indexed on load');
+    loggers.tabMonitor.debug('Initialized successfully - pages will be indexed on load');
   }
 
   /**
@@ -80,7 +82,7 @@ export class TabMonitor {
       this._handleWindowFocusChanged(windowId);
     });
 
-    console.log('[TabMonitor] Event listeners set up');
+    loggers.tabMonitor.debug('Event listeners set up');
   }
 
   /**
@@ -95,7 +97,7 @@ export class TabMonitor {
     if (changeInfo.status === 'complete' && tab.url) {
       // Check if URL should be excluded
       if (this._shouldExcludeUrl(tab.url)) {
-        console.log('[TabMonitor] Excluding URL:', tab.url);
+        loggers.tabMonitor.debug('Excluding URL:', tab.url);
         this._removeTab(tabId);
         return;
       }
@@ -105,7 +107,7 @@ export class TabMonitor {
       if (existingTab && existingTab.url !== tab.url) {
         // URL changed - trigger indexing for old page
         const dwellTime = Math.floor((Date.now() - existingTab.startTime) / 1000);
-        console.log(
+        loggers.tabMonitor.debug(
           '[TabMonitor] URL changed, indexing previous page:',
           existingTab.url,
           'Dwell time:', dwellTime + 's'
@@ -129,10 +131,10 @@ export class TabMonitor {
       
       this.tabs.set(tabId, tabInfo);
 
-      console.log('[TabMonitor] Tab loaded:', { tabId, url: tab.url, isActive });
+      loggers.tabMonitor.debug('Tab loaded:', { tabId, url: tab.url, isActive });
       
       // 🎯 NEW: Trigger indexing immediately on page load
-      console.log('[TabMonitor] ⚡ Triggering immediate indexing:', tab.url);
+      loggers.tabMonitor.debug('⚡ Triggering immediate indexing:', tab.url);
       this._triggerIndexing(tabInfo);
     }
   }
@@ -147,7 +149,7 @@ export class TabMonitor {
     if (this.activeTabId !== null && this.tabs.has(this.activeTabId)) {
       const prevTab = this.tabs.get(this.activeTabId)!;
       prevTab.isActive = false;
-      console.log('[TabMonitor] Tab deactivated:', this.activeTabId);
+      loggers.tabMonitor.debug('Tab deactivated:', this.activeTabId);
     }
 
     // Activate new tab
@@ -155,7 +157,7 @@ export class TabMonitor {
     if (this.tabs.has(tabId)) {
       const tab = this.tabs.get(tabId)!;
       tab.isActive = true;
-      console.log('[TabMonitor] Tab activated:', tabId);
+      loggers.tabMonitor.debug('Tab activated:', tabId);
     }
   }
 
@@ -180,13 +182,13 @@ export class TabMonitor {
   private _handleWindowFocusChanged(windowId: number): void {
     if (windowId === chrome.windows.WINDOW_ID_NONE) {
       // Browser lost focus - deactivate all tabs
-      console.log('[TabMonitor] Browser lost focus');
+      loggers.tabMonitor.debug('Browser lost focus');
       this.tabs.forEach((tab) => {
         tab.isActive = false;
       });
     } else {
       // Browser gained focus - reactivate current tab
-      console.log('[TabMonitor] Browser gained focus');
+      loggers.tabMonitor.debug('Browser gained focus');
       if (this.activeTabId !== null && this.tabs.has(this.activeTabId)) {
         this.tabs.get(this.activeTabId)!.isActive = true;
       }
@@ -258,6 +260,6 @@ export class TabMonitor {
    */
   stop(): void {
     this.tabs.clear();
-    console.log('[TabMonitor] Stopped');
+    loggers.tabMonitor.debug('Stopped');
   }
 }

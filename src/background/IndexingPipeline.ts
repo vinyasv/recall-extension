@@ -8,6 +8,7 @@ import type { ExtractedContent } from '../content/ContentExtractor';
 import { embeddingService } from '../lib/embeddings/EmbeddingService';
 import { summarizerService } from '../lib/summarizer/SummarizerService';
 import { vectorStore } from '../lib/storage/VectorStore';
+import { loggers } from '../lib/utils/logger';
 
 export interface IndexingResult {
   success: boolean;
@@ -26,14 +27,14 @@ export class IndexingPipeline {
    * Initialize the pipeline
    */
   async initialize(): Promise<void> {
-    console.log('[IndexingPipeline] Initializing...');
+    loggers.indexingPipeline.debug('Initializing...');
 
     // Initialize services
     await embeddingService.initialize();
     await summarizerService.initialize();
     await vectorStore.initialize();
 
-    console.log('[IndexingPipeline] Initialized');
+    loggers.indexingPipeline.debug('Initialized');
   }
 
   /**
@@ -48,46 +49,43 @@ export class IndexingPipeline {
     const startTime = Date.now();
 
     try {
-      console.log('[IndexingPipeline] 🚀 Processing:', queuedPage.url);
+      loggers.indexingPipeline.info('🚀 Processing:', queuedPage.url);
 
       // Stage 1: Extract content from the page
-      console.log('[IndexingPipeline] Stage 1: Extracting content...');
+      loggers.indexingPipeline.debug('Stage 1: Extracting content...');
       const content = await this._extractContent(queuedPage.tabId, queuedPage.url);
       if (!content) {
         return { success: false, error: 'Failed to extract content' };
       }
 
-      console.log('[IndexingPipeline] ✅ Content extracted:', content.textLength, 'chars, title:', content.title.substring(0, 50));
+      loggers.indexingPipeline.debug('✅ Content extracted:', content.textLength, 'chars, title:', content.title.substring(0, 50));
 
       // Validate passages
       if (!content.passages || content.passages.length === 0) {
         return { success: false, error: 'No passages extracted from content' };
       }
 
-      console.log('[IndexingPipeline] ✅ Content extracted:', content.textLength, 'chars, title:', content.title?.substring(0, 50));
-      console.log('[IndexingPipeline] Passages extracted:', content.passages.length, 'passages');
+      loggers.indexingPipeline.debug('✅ Content extracted:', content.textLength, 'chars, title:', content.title?.substring(0, 50));
+      loggers.indexingPipeline.debug('Passages extracted:', content.passages.length, 'passages');
 
-      // Stage 2: Generate search-optimized summary using Chrome Summarizer API
-      console.log('[IndexingPipeline] Stage 2: Generating AI summary...');
-      const summary = await this._generateSummary(content.content, content.url, content.title);
-      console.log('[IndexingPipeline] ✅ Summary generated:', summary.length, 'chars');
-
-      // Stage 3: Generate embeddings for passages
-      console.log('[IndexingPipeline] Stage 3: Generating passage embeddings...');
+      // Stage 2: Generate embeddings for passages (PRIMARY SEARCH)
+      loggers.indexingPipeline.debug('Stage 2: Generating passage embeddings...');
       const passagesWithEmbeddings = await this._generatePassageEmbeddings(content.passages);
-      console.log('[IndexingPipeline] ✅ Passage embeddings generated for', passagesWithEmbeddings.length, 'passages');
+      loggers.indexingPipeline.debug('✅ Passage embeddings generated for', passagesWithEmbeddings.length, 'passages');
 
-      // Create page-level embedding from title + summary + best passages
-      const pageEmbeddingText = this._createPageEmbeddingText(content.title, summary, passagesWithEmbeddings);
-      console.log('[IndexingPipeline] Page embedding text length:', pageEmbeddingText.length, 'chars');
+      // Stage 3: Generate page-level embedding from title + best passages
+      // (Used as fallback for page-level search, passages are primary)
+      loggers.indexingPipeline.debug('Stage 3: Generating page-level embedding...');
+      const pageEmbedding = await this._generatePageLevelEmbedding(content.title, passagesWithEmbeddings);
+      loggers.indexingPipeline.debug('✅ Page embedding generated:', pageEmbedding.length, 'dimensions');
 
-      // Stage 4: Generate page-level embedding
-      console.log('[IndexingPipeline] Stage 4: Generating page-level embedding...');
-      const pageEmbedding = await this._generateEmbedding(pageEmbeddingText);
-      console.log('[IndexingPipeline] ✅ Page embedding generated:', pageEmbedding.length, 'dimensions');
+      // Stage 4: Generate summary for display (optional, graceful fallback)
+      loggers.indexingPipeline.debug('Stage 4: Generating display summary...');
+      const summary = await this._generateDisplaySummary(content.content, passagesWithEmbeddings, content.url, content.title);
+      loggers.indexingPipeline.debug('✅ Summary generated:', summary.length, 'chars');
 
       // Stage 5: Store in database
-      console.log('[IndexingPipeline] Stage 5: Storing in database...');
+      loggers.indexingPipeline.debug('Stage 5: Storing in database...');
       const pageId = await this._storePage({
         url: queuedPage.url,
         title: content.title,
@@ -100,7 +98,7 @@ export class IndexingPipeline {
       });
 
       const totalTime = Date.now() - startTime;
-      console.log('[IndexingPipeline] 🎉 Page indexed successfully! ID:', pageId, 'Time:', totalTime + 'ms');
+      loggers.indexingPipeline.info('🎉 Page indexed successfully! ID:', pageId, 'Time:', totalTime + 'ms');
 
       return { success: true, pageId };
     } catch (error) {
@@ -119,7 +117,7 @@ export class IndexingPipeline {
     expectedUrl: string
   ): Promise<ExtractedContent | null> {
     try {
-      console.log('[IndexingPipeline] Extracting content from tab:', tabId, 'URL:', expectedUrl);
+      loggers.indexingPipeline.debug('Extracting content from tab:', tabId, 'URL:', expectedUrl);
 
       // Check if tab still exists
       const tab = await chrome.tabs.get(tabId).catch(() => null);
@@ -128,7 +126,7 @@ export class IndexingPipeline {
         return null;
       }
 
-      console.log('[IndexingPipeline] Tab exists, current URL:', tab.url);
+      loggers.indexingPipeline.debug('Tab exists, current URL:', tab.url);
 
       // IMPORTANT: Validate the tab URL matches what we expect
       // This prevents race conditions when user switches tabs/navigates
@@ -148,11 +146,11 @@ export class IndexingPipeline {
 
       // Send message to content script to extract content
       // Wrap in try-catch to handle connection errors gracefully
-      console.log('[IndexingPipeline] Sending EXTRACT_CONTENT message to tab:', tabId);
+      loggers.indexingPipeline.debug('Sending EXTRACT_CONTENT message to tab:', tabId);
       let response;
       try {
         response = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_CONTENT' });
-        console.log('[IndexingPipeline] Received response from content script');
+        loggers.indexingPipeline.debug('Received response from content script');
       } catch (sendError: any) {
         // If we get a connection error, it means content script isn't loaded yet
         if (sendError.message?.includes('Could not establish connection') ||
@@ -224,7 +222,7 @@ export class IndexingPipeline {
 
     for (let i = 0; i < passages.length; i += batchSize) {
       const batch = passages.slice(i, i + batchSize);
-      console.log(`[IndexingPipeline] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(passages.length / batchSize)}`);
+      loggers.indexingPipeline.debug(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(passages.length / batchSize)}`);
 
       // Generate embeddings for the batch
       // If this fails, we want the entire indexing job to fail (no silent fallback)
@@ -250,41 +248,76 @@ export class IndexingPipeline {
   }
 
   /**
-   * Create page-level embedding text from title, summary and best passages
+   * Generate page-level embedding from title and best passages
+   * (No summary needed - passages already contain semantic information)
    */
-  private _createPageEmbeddingText(title: string, summary: string, passages: any[]): string {
+  private async _generatePageLevelEmbedding(title: string, passages: any[]): Promise<Float32Array> {
     // Sort passages by quality and take the best ones
-    const sortedPassages = passages
+    const topPassages = passages
       .filter(p => p.quality > 0.3) // Filter out low-quality passages
       .sort((a, b) => b.quality - a.quality)
-      .slice(0, 3); // Take top 3 passages (reduced since we have summary)
+      .slice(0, 5); // Take top 5 passages for page-level embedding
 
-    const passageTexts = sortedPassages.map(p => p.text).join(' ');
+    const passageTexts = topPassages.map(p => p.text).join(' ');
 
-    // Combine title, summary, and passages for optimal search embedding
+    // Combine title and top passages
     const parts = [];
     if (title) parts.push(title);
-    if (summary && summary.length > 50) parts.push(summary);
     if (passageTexts) parts.push(passageTexts);
 
-    return parts.join('. ');
+    const pageEmbeddingText = parts.join('. ');
+
+    return await this._generateEmbedding(pageEmbeddingText);
   }
 
   /**
-   * Generate search-optimized summary using Chrome Summarizer API
-   * CRITICAL: This is a mandatory step - indexing will fail if summarization fails
+   * Generate display summary using Chrome Summarizer API (optional with graceful fallback)
+   * Uses Chrome AI when available, falls back to best passages for display
    */
-  private async _generateSummary(content: string, url: string, title: string): Promise<string> {
-    console.log('[IndexingPipeline] 🤖 Attempting Chrome AI summarization (REQUIRED)...');
+  private async _generateDisplaySummary(
+    content: string,
+    passages: any[],
+    url: string,
+    title: string
+  ): Promise<string> {
+    try {
+      loggers.indexingPipeline.debug('🤖 Attempting Chrome AI summarization for display...');
 
-    const summary = await summarizerService.summarizeForSearch(content, url, title, 800);
+      const summary = await summarizerService.summarizeForSearch(content, url, title, 300);
 
-    if (!summary || summary.length === 0) {
-      throw new Error('Chrome Summarizer API failed - empty summary returned. Chrome 138+ with Gemini Nano is required.');
+      if (summary && summary.length > 0) {
+        loggers.indexingPipeline.debug('✅ Chrome AI summary successful:', summary.length, 'chars');
+        return summary;
+      }
+    } catch (error) {
+      loggers.indexingPipeline.debug('Chrome Summarizer API unavailable, using passage fallback:', error);
     }
 
-    console.log('[IndexingPipeline] ✅ Chrome AI summary successful:', summary.length, 'chars');
-    return summary;
+    // Fallback: Use best passages for display summary
+    loggers.indexingPipeline.debug('📄 Using passage-based fallback for summary');
+    return this._createSummaryFromPassages(passages);
+  }
+
+  /**
+   * Create display summary from best passages (fallback when Summarizer API unavailable)
+   */
+  private _createSummaryFromPassages(passages: any[]): string {
+    const topPassages = passages
+      .filter(p => p.quality > 0.4) // Higher quality threshold for display
+      .sort((a, b) => b.quality - a.quality)
+      .slice(0, 2); // Top 2 passages
+
+    if (topPassages.length === 0) {
+      // Last resort: use first passage
+      return passages[0]?.text?.substring(0, 300) || '';
+    }
+
+    const summary = topPassages
+      .map(p => p.text)
+      .join(' ')
+      .substring(0, 300); // Limit to 300 chars for display
+
+    return summary.trim();
   }
 
   /**
@@ -393,7 +426,7 @@ export class IndexingPipeline {
       });
     });
 
-    console.log('[IndexingPipeline] 📢 Broadcast PAGE_INDEXED:', pageInfo.title);
+    loggers.indexingPipeline.debug('📢 Broadcast PAGE_INDEXED:', pageInfo.title);
   }
 
   /**

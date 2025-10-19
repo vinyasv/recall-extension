@@ -12,8 +12,9 @@ import { indexingQueue } from './IndexingQueue';
 import { indexingPipeline } from './IndexingPipeline';
 import { offscreenManager } from './OffscreenManager';
 import { ragController } from '../lib/rag/RAGController';
+import { loggers } from '../lib/utils/logger';
 
-console.log('[Recall] Background service worker started');
+loggers.background.info('Background service worker started');
 
 // Build-time env guard (Vite replaces import.meta.env); TS type-safe via any
 const isProd = (import.meta as any).env?.PROD === true;
@@ -30,27 +31,27 @@ let initializationPromise: Promise<void> | null = null;
  * Initialize the extension when installed or updated
  */
 chrome.runtime.onInstalled.addListener(async (details) => {
-  console.log('[Recall] Extension installed/updated:', details.reason);
+  loggers.background.info('Extension installed/updated:', details.reason);
 
   if (details.reason === 'install') {
-    console.log('[Recall] First install - initializing...');
+    loggers.background.info('First install - initializing...');
 
     // Initialize database
     try {
-      console.log('[Recall] Initializing vector database...');
+      loggers.background.debug('Initializing vector database...');
       await vectorStore.initialize();
-      console.log('[Recall] Vector database initialized successfully');
+      loggers.background.info('Vector database initialized successfully');
     } catch (error) {
-      console.error('[Recall] Failed to initialize database:', error);
+      loggers.background.error('Failed to initialize database:', error);
     }
 
     // Initialize embedding service in background
     try {
-      console.log('[Recall] Pre-loading embedding model...');
+      loggers.background.debug('Pre-loading embedding model...');
       await embeddingService.initialize();
-      console.log('[Recall] Embedding model loaded successfully');
+      loggers.background.info('Embedding model loaded successfully');
     } catch (error) {
-      console.error('[Recall] Failed to initialize embedding model:', error);
+      loggers.background.error('Failed to initialize embedding model:', error);
     }
 
     // Set default configuration
@@ -63,9 +64,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       },
     });
 
-    console.log('[Recall] Initialization complete');
+    loggers.background.info('Initialization complete');
   } else if (details.reason === 'update') {
-    console.log('[Recall] Extension updated from', details.previousVersion);
+    loggers.background.info('Extension updated from', details.previousVersion);
   }
 
   // Initialize Phase 3 components (on both install and update)
@@ -78,24 +79,24 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 async function initializePhase3(): Promise<void> {
   // If already initialized, skip
   if (isInitialized) {
-    console.log('[Recall] Already initialized, skipping...');
+    loggers.background.debug('Already initialized, skipping...');
     return;
   }
 
   // If initialization is in progress, wait for it
   if (initializationPromise) {
-    console.log('[Recall] Initialization already in progress, waiting...');
+    loggers.background.debug('Initialization already in progress, waiting...');
     await initializationPromise;
     return;
   }
 
   // Create and store the initialization promise
   initializationPromise = (async () => {
-    console.log('[Recall] Initializing Phase 3 components...');
+    loggers.background.info('Initializing Phase 3 components...');
 
   try {
     // CRITICAL: Validate Chrome AI API availability first
-    console.log('[Recall] Validating Chrome AI API availability...');
+    loggers.background.debug('Validating Chrome AI API availability...');
     await summarizerService.initialize();
     const isAIAvailable = await summarizerService.isAIApiAvailable();
 
@@ -113,41 +114,41 @@ async function initializePhase3(): Promise<void> {
       throw new Error(errorMsg);
     }
 
-    console.log('[Recall] Chrome AI API validation passed');
+    loggers.background.info('Chrome AI API validation passed');
 
     // Initialize indexing queue
-    console.log('[Recall] Initializing indexing queue...');
+    loggers.background.debug('Initializing indexing queue...');
     await indexingQueue.initialize();
 
     // Clear any stale items from the queue (from tabs open before extension reload)
     const queueSize = indexingQueue.size();
     if (queueSize > 0) {
-      console.log(`[Recall] Clearing ${queueSize} stale items from queue (from before extension reload)`);
+      loggers.background.debug(`Clearing ${queueSize} stale items from queue (from before extension reload)`);
       await indexingQueue.clear();
     }
 
-    console.log('[Recall] Indexing queue ready');
+    loggers.background.debug('Indexing queue ready');
 
     // Initialize indexing pipeline
-    console.log('[Recall] Initializing indexing pipeline...');
+    loggers.background.debug('Initializing indexing pipeline...');
     await indexingPipeline.initialize();
-    console.log('[Recall] Indexing pipeline ready');
+    loggers.background.debug('Indexing pipeline ready');
 
     // Initialize tab monitor with callback
-    console.log('[Recall] Initializing tab monitor...');
+    loggers.background.debug('Initializing tab monitor...');
     await tabMonitor.initialize(async (tabInfo) => {
-      console.log('[Recall] Page loaded, queuing for indexing:', tabInfo.url);
+      loggers.background.debug('Page loaded, queuing for indexing:', tabInfo.url);
       await indexingQueue.add(tabInfo);
       updateBadge();
     });
-    console.log('[Recall] Tab monitor ready (indexing on page load)');
+    loggers.background.debug('Tab monitor ready (indexing on page load)');
 
     // Start queue processor
     startQueueProcessor();
-    console.log('[Recall] Queue processor started');
+    loggers.background.debug('Queue processor started');
 
-    console.log('[Recall] Phase 3 initialized successfully!');
-    console.log('[Recall] Ready to index pages immediately on load with Chrome AI Summarizer API');
+    loggers.background.info('Phase 3 initialized successfully!');
+    loggers.background.info('Ready to index pages immediately on load with Chrome AI Summarizer API');
 
     // Mark as initialized
     isInitialized = true;
@@ -166,14 +167,14 @@ async function initializePhase3(): Promise<void> {
  */
 function startQueueProcessor(): void {
   if (queueProcessor) {
-    console.log('[Recall] Queue processor already running, skipping start');
+    loggers.background.debug('Queue processor already running, skipping start');
     return;
   }
 
   queueProcessor = setInterval(async () => {
     // Skip if already processing
     if (indexingPipeline.isCurrentlyProcessing() || indexingQueue.isCurrentlyProcessing()) {
-      console.log('[Recall] Queue processor: Skipping, already processing');
+      loggers.background.debug('Queue processor: Skipping, already processing');
       return;
     }
 
@@ -183,7 +184,7 @@ function startQueueProcessor(): void {
       return;
     }
 
-    console.log('[Recall] Processing queued page:', next.url);
+    loggers.background.debug('Processing queued page:', next.url);
 
     // Process the page
     indexingQueue.setProcessing(true);
@@ -199,7 +200,7 @@ function startQueueProcessor(): void {
     updateBadge();
   }, 500); // Check every 500ms for fast processing
 
-  console.log('[Recall] Queue processor started');
+  loggers.background.debug('Queue processor started');
 }
 
 /**
@@ -219,7 +220,7 @@ function updateBadge(): void {
  * Handle extension startup
  */
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('[Recall] Browser started, extension active');
+  loggers.background.info('Browser started, extension active');
 
   // Reinitialize Phase 3 components on browser startup
   await initializePhase3();
@@ -229,7 +230,7 @@ chrome.runtime.onStartup.addListener(async () => {
  * Run comprehensive search metrics test
  */
 async function runSearchMetricsTest() {
-  console.log('[Recall] Starting search metrics test...');
+  loggers.background.debug('Starting search metrics test...');
 
   // Test configuration - improved queries that actually match test content
   const testQueries = [
@@ -286,7 +287,7 @@ async function runSearchMetricsTest() {
 
   // Run tests for each query and mode
   for (const query of testQueries) {
-    console.log(`[Recall] Testing query: "${query}"`);
+    loggers.background.debug(`Testing query: "${query}"`);
 
     const queryResults: typeof results.sampleQueries[string] = {
       totalTime: 0,
@@ -334,7 +335,7 @@ async function runSearchMetricsTest() {
             similarities
           });
 
-          console.log(`[Recall] ${mode} (k=${k}): ${searchResults.length} results in ${searchTime.toFixed(2)}ms (avg sim: ${avgSimilarity.toFixed(3)})`);
+          loggers.background.debug(`${mode} (k=${k}): ${searchResults.length} results in ${searchTime.toFixed(2)}ms (avg sim: ${avgSimilarity.toFixed(3)})`);
 
           totalTests++;
 
@@ -415,7 +416,7 @@ async function runSearchMetricsTest() {
       : 0
   };
 
-  console.log('[Recall] Search metrics test completed:', { totalTests, avgSearchTime, thresholdRespected });
+  loggers.background.debug('Search metrics test completed:', { totalTests, avgSearchTime, thresholdRespected });
 
   return {
     results,
@@ -476,7 +477,7 @@ function createPassagesFromContent(content: string, summary: string): Array<{
  * Handle messages from other parts of the extension
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[Recall] Received message:', message.type, 'from:', sender.tab?.id || 'popup');
+  loggers.background.debug('Received message:', message.type, 'from:', sender.tab?.id || 'popup');
 
   // Handle different message types
   switch (message.type) {
@@ -486,7 +487,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'GET_STATUS':
       // Get status including database stats
-      console.log('[Recall] GET_STATUS request received');
+      loggers.background.debug('GET_STATUS request received');
       vectorStore
         .getStats()
         .then((dbStats) => {
@@ -495,7 +496,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             cacheStats: embeddingService.getCacheStats(),
             dbStats,
           };
-          console.log('[Recall] Sending status response:', response);
+          loggers.background.debug('Sending status response:', response);
           sendResponse(response);
         })
         .catch((error) => {
@@ -506,18 +507,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             dbStats: null,
             error: error.message,
           };
-          console.log('[Recall] Sending error response:', response);
+          loggers.background.debug('Sending error response:', response);
           sendResponse(response);
         });
       return true; // Async response
 
     case 'GET_DB_STATS':
       // Get database statistics
-      console.log('[Recall] GET_DB_STATS request received');
+      loggers.background.debug('GET_DB_STATS request received');
       vectorStore
         .getStats()
         .then((stats) => {
-          console.log('[Recall] Sending DB stats:', stats);
+          loggers.background.debug('Sending DB stats:', stats);
           sendResponse({ success: true, stats });
         })
         .catch((error) => {
@@ -528,13 +529,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'GET_ALL_PAGES':
       // Get all pages (sorted by timestamp - latest first)
-      console.log('[Recall] GET_ALL_PAGES request received');
+      loggers.background.debug('GET_ALL_PAGES request received');
       vectorStore
         .getAllPages()
         .then((pages) => {
           // Sort by timestamp descending (latest first)
           const sortedPages = pages.sort((a, b) => b.timestamp - a.timestamp);
-          console.log('[Recall] Sending', sortedPages.length, 'pages (sorted by timestamp)');
+          loggers.background.debug('Sending', sortedPages.length, 'pages (sorted by timestamp)');
           sendResponse({ success: true, pages: sortedPages });
         })
         .catch((error) => {
@@ -545,16 +546,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'CLEAR_HISTORY':
       // Clear all history from IndexedDB
-      console.log('[Recall] CLEAR_HISTORY request received');
+      loggers.background.debug('CLEAR_HISTORY request received');
       vectorStore
         .clearAll()
         .then(() => {
-          console.log('[Recall] All history cleared successfully');
+          loggers.background.info('All history cleared successfully');
           // Also clear the indexing queue to remove stale items
           indexingQueue
             .clear()
             .then(() => {
-              console.log('[Recall] Indexing queue cleared after history wipe');
+              loggers.background.debug('Indexing queue cleared after history wipe');
             })
             .catch((queueError) => {
               console.error('[Recall] Failed to clear indexing queue:', queueError);
@@ -689,7 +690,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (queueProcessor) {
         clearInterval(queueProcessor);
         queueProcessor = null;
-        console.log('[Recall] Indexing paused');
+        loggers.background.info('Indexing paused');
         sendResponse({ success: true });
       } else {
         sendResponse({ success: false, error: 'Already paused' });
@@ -725,7 +726,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Run comprehensive search metrics test (dev-only)
         (async () => {
           try {
-            console.log('[Recall] Running search metrics test...');
+            loggers.background.debug('Running search metrics test...');
 
             // Get database stats first
             const dbStats = await vectorStore.getStats();
@@ -735,7 +736,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
             const metrics = await runSearchMetricsTest();
 
-            console.log('[Recall] Search metrics test completed:', metrics);
+            loggers.background.debug('Search metrics test completed:', metrics);
             sendResponse({ success: true, metrics });
           } catch (error) {
             console.error('[Recall] Search metrics test failed:', error);
@@ -756,17 +757,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { text, url, title, maxLength } = message;
-          console.log('[Recall] Testing summarizer with:', { textLength: text.length, url, title, maxLength });
+          loggers.background.debug('Testing summarizer with:', { textLength: text.length, url, title, maxLength });
 
           // Initialize summarizer and check API availability
           await summarizerService.initialize();
           const isApiAvailable = await summarizerService.isAIApiAvailable();
-          console.log('[Recall] API availability check result:', isApiAvailable);
+          loggers.background.debug('API availability check result:', isApiAvailable);
 
           const summary = await summarizerService.summarizeForSearch(text, url, title, maxLength);
           const apiType = isApiAvailable ? 'Chrome AI API' : 'Extractive Fallback';
 
-          console.log('[Recall] Summarizer test successful:', {
+          loggers.background.debug('Summarizer test successful:', {
             summaryLength: summary.length,
             apiType,
             summaryPreview: summary.substring(0, 100) + '...'
@@ -778,7 +779,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             apiType,
           };
 
-          console.log('[Recall] Sending TEST_SUMMARIZER response:', response);
+          loggers.background.debug('Sending TEST_SUMMARIZER response:', response);
           sendResponse(response);
         } catch (error) {
           console.error('[Recall] Summarizer test failed:', error);
@@ -786,7 +787,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             success: false,
             error: (error as Error).message,
           };
-          console.log('[Recall] Sending TEST_SUMMARIZER error response:', errorResponse);
+          loggers.background.debug('Sending TEST_SUMMARIZER error response:', errorResponse);
           sendResponse(errorResponse);
         }
       })();
@@ -797,7 +798,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { text } = message;
-          console.log('[Recall] Testing embeddings with:', { textLength: text.length });
+          loggers.background.debug('Testing embeddings with:', { textLength: text.length });
 
           // Ensure embedding service is initialized
           await embeddingService.initialize();
@@ -806,7 +807,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const embedding = await embeddingService.generateEmbedding(text);
           const generationTime = performance.now() - startTime;
 
-          console.log('[Recall] Embedding test successful:', {
+          loggers.background.debug('Embedding test successful:', {
             dimensions: embedding.length,
             generationTime: generationTime.toFixed(2)
           });
@@ -833,7 +834,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { queries } = message;
-          console.log('[Recall] Testing hybrid search with queries:', queries);
+          loggers.background.debug('Testing hybrid search with queries:', queries);
 
           const results = [];
 
@@ -856,7 +857,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
           }
 
-          console.log('[Recall] Hybrid search test successful:', results);
+          loggers.background.debug('Hybrid search test successful:', results);
 
           sendResponse({
             success: true,
@@ -874,18 +875,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'SUMMARIZER_RESPONSE':
       // Handle response from offscreen summarizer
-      console.log('[Recall] Received summarizer response:', message.response.id);
+      loggers.background.debug('Received summarizer response:', message.response.id);
       offscreenManager.handleResponse(message.response);
       return false;
 
     case 'OFFSCREEN_SUMMARIZER_READY':
       // Handle ready signal from offscreen document
-      console.log('[Recall] Offscreen summarizer is ready');
+      loggers.background.debug('Offscreen summarizer is ready');
       return false;
 
     case 'PROMPT_RESPONSE':
       // Handle response from offscreen prompt API
-      console.log('[Recall] Received prompt response:', message.response.id);
+      loggers.background.debug('Received prompt response:', message.response.id);
       offscreenManager.handlePromptResponse(message.response);
       return false;
 
@@ -894,7 +895,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { question, options } = message;
-          console.log('[Recall] RAG query received:', question);
+          loggers.background.debug('RAG query received:', question);
 
           const result = await ragController.answerQuestion(question, options);
 
@@ -923,7 +924,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { question, options } = message;
-          console.log('[Recall] RAG streaming query received:', question);
+          loggers.background.debug('RAG streaming query received:', question);
 
           // Note: Streaming requires a different communication pattern
           // We'll send chunks via separate messages
@@ -985,7 +986,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { pageData } = message;
-          console.log('[Recall] Manual indexing request for:', pageData.url);
+          loggers.background.debug('Manual indexing request for:', pageData.url);
 
           // Create passages from content
           const summary = pageData.content.substring(0, 500); // Quick summary for eval
@@ -1008,7 +1009,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             lastAccessed: 0,
           });
 
-          console.log('[Recall] Page indexed successfully:', id);
+          loggers.background.debug('Page indexed successfully:', id);
           sendResponse({ success: true, id });
         } catch (error) {
           console.error('[Recall] Manual indexing failed:', error);
@@ -1030,7 +1031,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 const KEEP_ALIVE_INTERVAL = 20000; // 20 seconds
 setInterval(() => {
-  console.log('[Recall] Service worker keepalive ping');
+  loggers.background.debug('Service worker keepalive ping');
 }, KEEP_ALIVE_INTERVAL);
 
 /**
@@ -1038,7 +1039,7 @@ setInterval(() => {
  */
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'toggle-sidebar') {
-    console.log('[Recall] Keyboard shortcut (Cmd+Shift+E) triggered from background');
+    loggers.background.debug('Keyboard shortcut (Cmd+Shift+E) triggered from background');
     await toggleSidebarOnActiveTab();
   }
 });
@@ -1047,7 +1048,7 @@ chrome.commands.onCommand.addListener(async (command) => {
  * Handle extension icon click
  */
 chrome.action.onClicked.addListener(async (tab) => {
-  console.log('[Recall] Extension icon clicked on tab:', tab.id, tab.url);
+  loggers.background.debug('Extension icon clicked on tab:', tab.id, tab.url);
   await toggleSidebarOnActiveTab();
 });
 
@@ -1074,12 +1075,12 @@ async function toggleSidebarOnActiveTab(): Promise<void> {
       return;
     }
 
-    console.log('[Recall] Sending TOGGLE_SIDEBAR to tab:', activeTab.id, activeTab.url);
+    loggers.background.debug('Sending TOGGLE_SIDEBAR to tab:', activeTab.id, activeTab.url);
 
     // Try to send message to content script
     try {
       await chrome.tabs.sendMessage(activeTab.id, { type: 'TOGGLE_SIDEBAR' });
-      console.log('[Recall] TOGGLE_SIDEBAR message sent successfully');
+      loggers.background.debug('TOGGLE_SIDEBAR message sent successfully');
     } catch (error: any) {
       if (error.message?.includes('Could not establish connection') ||
           error.message?.includes('Receiving end does not exist')) {
@@ -1094,7 +1095,7 @@ async function toggleSidebarOnActiveTab(): Promise<void> {
   }
 }
 
-console.log('[Recall] Background service worker ready');
+loggers.background.info('Background service worker ready');
 
 // Initialize Phase 3 components immediately when service worker starts
 // This ensures initialization happens even when extension is reloaded during development
