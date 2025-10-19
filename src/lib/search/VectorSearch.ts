@@ -63,20 +63,24 @@ function calculateRecencyScore(timestamp: number, config: RankingConfig): number
 }
 
 /**
- * Calculate access frequency score (0-1, more accesses is better)
- * @param lastAccessed Last access timestamp (0 if never accessed)
- * @param timestamp Original visit timestamp
+ * Calculate visit frequency score (0-1, more visits is better)
+ * Uses logarithmic scaling to ensure diminishing returns
+ * @param visitCount Number of times the page has been visited
+ * @param maxVisitCount Maximum visit count across all pages (for normalization)
  * @returns Frequency score
  */
-function calculateFrequencyScore(lastAccessed: number, timestamp: number): number {
-  // If never accessed from search, return 0
-  if (lastAccessed === 0 || lastAccessed === timestamp) {
+function calculateFrequencyScore(visitCount: number, maxVisitCount: number): number {
+  // If never visited or max is 0, return 0
+  if (visitCount <= 0 || maxVisitCount <= 0) {
     return 0;
   }
 
-  // Simple heuristic: if accessed from search, give it a boost
-  // In the future, this could track access count
-  return 0.5;
+  // Logarithmic scaling: log(visitCount + 1) / log(maxVisitCount + 1)
+  // This ensures diminishing returns (2→3 visits matters more than 20→21)
+  // +1 to avoid log(0) and ensure single visits get non-zero score
+  const score = Math.log(visitCount + 1) / Math.log(maxVisitCount + 1);
+
+  return Math.max(0, Math.min(1, score));
 }
 
 /**
@@ -85,13 +89,15 @@ function calculateFrequencyScore(lastAccessed: number, timestamp: number): numbe
  * @param page Page record or metadata
  * @param options Search options
  * @param config Ranking configuration
+ * @param maxVisitCount Maximum visit count across all pages (for normalization)
  * @returns Combined relevance score
  */
 function calculateRelevance(
   similarity: number,
   page: PageRecord | PageMetadata,
   options: Required<SearchOptions>,
-  config: RankingConfig
+  config: RankingConfig,
+  maxVisitCount: number
 ): number {
   let score = similarity * config.baseWeight;
 
@@ -101,7 +107,7 @@ function calculateRelevance(
   }
 
   if (options.boostFrequent) {
-    const frequencyScore = calculateFrequencyScore(page.lastAccessed, page.timestamp);
+    const frequencyScore = calculateFrequencyScore(page.visitCount, maxVisitCount);
     score += frequencyScore * options.frequencyWeight;
   }
 
@@ -163,6 +169,10 @@ export async function searchSimilar(
 
     loggers.vectorSearch.debug('Phase 1: Searching across', pageMetadata.length, 'pages using metadata only');
 
+  // Calculate max visit count for normalization
+  const maxVisitCount = Math.max(...pageMetadata.map(m => m.visitCount), 1);
+  loggers.vectorSearch.debug('Max visit count across all pages:', maxVisitCount);
+
   // Calculate page-level similarities and find candidates
   const candidates: Array<{
     metadata: PageMetadata;
@@ -178,7 +188,7 @@ export async function searchSimilar(
       continue;
     }
 
-    const relevanceScore = calculateRelevance(similarity, metadata, opts, DEFAULT_RANKING_CONFIG);
+    const relevanceScore = calculateRelevance(similarity, metadata, opts, DEFAULT_RANKING_CONFIG, maxVisitCount);
 
     candidates.push({
       metadata,
@@ -236,7 +246,7 @@ export async function searchSimilar(
     const primarySimilarity = maxPassageSimilarity > 0 ? maxPassageSimilarity : candidate.similarity;
 
     // Calculate final relevance score
-    const baseRelevanceScore = calculateRelevance(primarySimilarity, fullPage, opts, DEFAULT_RANKING_CONFIG);
+    const baseRelevanceScore = calculateRelevance(primarySimilarity, fullPage, opts, DEFAULT_RANKING_CONFIG, maxVisitCount);
 
     // Boost for multiple high-quality passage matches
     const passageBoost = passageMatches > 0

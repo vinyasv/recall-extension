@@ -17,7 +17,7 @@ import { PERFORMANCE_CONFIG } from '../config/searchConfig';
 
 const DEFAULT_CONFIG: DatabaseConfig = {
   name: 'RecallVectorDB',
-  version: 3, // Increment version for metadata support
+  version: 4, // Increment version for visitCount support
   storeName: 'pages',
 };
 
@@ -87,6 +87,7 @@ export class VectorStore {
           objectStore.createIndex('timestamp', 'timestamp', { unique: false });
           objectStore.createIndex('dwellTime', 'dwellTime', { unique: false });
           objectStore.createIndex('lastAccessed', 'lastAccessed', { unique: false });
+          objectStore.createIndex('visitCount', 'visitCount', { unique: false });
 
           loggers.vectorStore.debug('Object store and indexes created');
         } else if (oldVersion < 2) {
@@ -106,6 +107,20 @@ export class VectorStore {
               loggers.vectorStore.error('Failed to clear old data:', clearRequest.error);
             };
           }
+        } else if (oldVersion < 4 && transaction) {
+          // Upgrade to version 4: add visitCount field
+          loggers.vectorStore.debug('Upgrading to version 4 (visitCount support)');
+
+          const objectStore = transaction.objectStore(this.config.storeName);
+
+          // Add visitCount index if it doesn't exist
+          if (!objectStore.indexNames.contains('visitCount')) {
+            objectStore.createIndex('visitCount', 'visitCount', { unique: false });
+            loggers.vectorStore.debug('Added visitCount index');
+          }
+
+          // Existing records will get visitCount: 1 via deserialization defaults
+          loggers.vectorStore.debug('visitCount migration complete (existing pages will default to visitCount: 1)');
         }
       };
     });
@@ -443,6 +458,7 @@ export class VectorStore {
       timestamp: serialized.timestamp,
       dwellTime: serialized.dwellTime,
       lastAccessed: serialized.lastAccessed,
+      visitCount: serialized.visitCount ?? 1, // Default to 1 for migration
     };
   }
 
@@ -461,6 +477,7 @@ export class VectorStore {
       ...serialized,
       passages,
       embedding: new Float32Array(serialized.embedding),
+      visitCount: serialized.visitCount ?? 1, // Default to 1 for migration
     };
   }
 

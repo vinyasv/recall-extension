@@ -619,6 +619,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               timestamp: Date.now(),
               dwellTime: 60,
               lastAccessed: 0,
+              visitCount: 1,
             });
 
             sendResponse({ success: true, id });
@@ -1007,6 +1008,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             timestamp: Date.now(),
             dwellTime: 60,
             lastAccessed: 0,
+            visitCount: 1,
           });
 
           loggers.background.debug('Page indexed successfully:', id);

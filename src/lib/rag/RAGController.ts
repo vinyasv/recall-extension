@@ -352,6 +352,7 @@ export class RAGController {
         timestamp: Date.now(),
         dwellTime: 0,
         lastAccessed: 0,
+        visitCount: 1, // Default value (actual count not needed for RAG context)
       },
       similarity: 0, // Not meaningful at page level
       relevanceScore: 0, // Not meaningful at page level

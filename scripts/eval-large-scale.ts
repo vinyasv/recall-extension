@@ -90,7 +90,8 @@ async function runLargeScaleEvaluation() {
       embedding: pageEmbedding,
       timestamp: Date.now() - processed * 1000,
       dwellTime: 60 + Math.random() * 300,
-      lastAccessed: 0
+      lastAccessed: 0,
+      visitCount: corpusPage.visitCount // Use visitCount from corpus
     });
 
     processed++;
@@ -109,7 +110,8 @@ async function runLargeScaleEvaluation() {
       embedding: p.embedding,
       timestamp: p.timestamp,
       dwellTime: p.dwellTime,
-      lastAccessed: p.lastAccessed
+      lastAccessed: p.lastAccessed,
+      visitCount: p.visitCount // Include visitCount
     }));
   };
   (vectorStore as any).getAllPages = async (): Promise<PageRecord[]> => {

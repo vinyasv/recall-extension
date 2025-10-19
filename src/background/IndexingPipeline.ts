@@ -362,7 +362,7 @@ export class IndexingPipeline {
     let isUpdate = false;
 
     if (existing) {
-      // Update existing page
+      // Update existing page and increment visit count
       await vectorStore.updatePage(existing.id, {
         title: data.title,
         content: data.content,
@@ -371,9 +371,11 @@ export class IndexingPipeline {
         embedding: data.embedding,
         timestamp: data.timestamp,
         dwellTime: data.dwellTime,
+        visitCount: existing.visitCount + 1, // Increment visit count
       });
       pageId = existing.id;
       isUpdate = true;
+      loggers.indexingPipeline.debug(`Page re-visited (visitCount: ${existing.visitCount} → ${existing.visitCount + 1})`);
     } else {
       // Add new page
       pageId = await vectorStore.addPage({
@@ -386,7 +388,9 @@ export class IndexingPipeline {
         timestamp: data.timestamp,
         dwellTime: data.dwellTime,
         lastAccessed: 0,
+        visitCount: 1, // First visit
       });
+      loggers.indexingPipeline.debug('New page indexed (visitCount: 1)');
     }
 
     // Broadcast to all tabs that a page has been indexed

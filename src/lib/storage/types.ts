@@ -56,6 +56,9 @@ export interface PageMetadata {
 
   /** Last time this page was accessed from search results (ms since epoch) */
   lastAccessed: number;
+
+  /** Number of times this URL has been visited */
+  visitCount: number;
 }
 
 /**
@@ -91,6 +94,9 @@ export interface PageRecord {
 
   /** Last time this page was accessed from search results (ms since epoch) */
   lastAccessed: number;
+
+  /** Number of times this URL has been visited */
+  visitCount: number;
 }
 
 /**
@@ -161,6 +167,7 @@ export interface SerializedPageMetadata {
   timestamp: number;
   dwellTime: number;
   lastAccessed: number;
+  visitCount: number;
 }
 
 /**
@@ -178,4 +185,5 @@ export interface SerializedPageRecord {
   timestamp: number;
   dwellTime: number;
   lastAccessed: number;
+  visitCount: number;
 }

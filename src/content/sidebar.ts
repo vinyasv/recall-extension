@@ -628,6 +628,35 @@ function injectStyles(): void {
       color: #000000;
     }
 
+    /* Source Badge Styles */
+    .rewind-source-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      margin: 0 1px;
+      background: #E0E0E0;
+      color: #5A5A5A;
+      border-radius: 6px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-weight: 500;
+      font-size: 10px;
+      line-height: 1.4;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      vertical-align: baseline;
+      white-space: nowrap;
+    }
+
+    .rewind-source-badge:hover {
+      background: #C0C0C0;
+      color: #3A3A3A;
+      text-decoration: underline;
+    }
+
+    .rewind-source-badge:active {
+      background: #A8A8A8;
+      transform: scale(0.95);
+    }
+
     .rewind-chat-sources {
       max-width: 85%;
       padding: 10px;
@@ -1214,7 +1243,35 @@ function addChatMessage(role: 'user' | 'assistant', content: string, sources?: a
 
   const bubbleEl = document.createElement('div');
   bubbleEl.className = 'rewind-chat-bubble';
-  bubbleEl.textContent = content;
+
+  // For assistant messages with sources, replace [Source N] with styled badges
+  if (role === 'assistant' && sources && sources.length > 0) {
+    const processedContent = content.replace(/\[Source (\d+)\]/g, (match, num) => {
+      const sourceIndex = parseInt(num) - 1;
+      if (sourceIndex >= 0 && sourceIndex < sources.length) {
+        const source = sources[sourceIndex];
+        const escapedUrl = escapeHtml(source.page.url);
+        return `<span class="rewind-source-badge" data-source-url="${escapedUrl}" data-source-num="${num}">${num}</span>`;
+      }
+      return match;
+    });
+    bubbleEl.innerHTML = processedContent;
+
+    // Add click handlers to source badges
+    setTimeout(() => {
+      bubbleEl.querySelectorAll('.rewind-source-badge').forEach((badge) => {
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const url = (e.target as HTMLElement).getAttribute('data-source-url');
+          if (url) {
+            window.open(url, '_blank');
+          }
+        });
+      });
+    }, 0);
+  } else {
+    bubbleEl.textContent = content;
+  }
 
   messageEl.appendChild(bubbleEl);
 
@@ -1228,10 +1285,10 @@ function addChatMessage(role: 'user' | 'assistant', content: string, sources?: a
     titleEl.textContent = `Sources (${sources.length})`;
     sourcesEl.appendChild(titleEl);
 
-    sources.forEach((source) => {
+    sources.forEach((source, index) => {
       const sourceItem = document.createElement('div');
       sourceItem.className = 'rewind-chat-source-item';
-      sourceItem.textContent = `• ${source.page.title || 'Untitled'}`;
+      sourceItem.textContent = `• (${index + 1}) ${source.page.title || 'Untitled'}`;
       sourceItem.addEventListener('click', () => {
         window.open(source.page.url, '_blank');
       });
