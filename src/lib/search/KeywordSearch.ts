@@ -131,9 +131,6 @@ export class KeywordSearch {
       idfScores.set(term, calculateIDF(term, allDocuments));
     }
 
-    // Calculate max visit count for frequency boost normalization
-    const maxVisitCount = Math.max(...pages.map(p => p.visitCount), 1);
-
     // Calculate TF-IDF scores for each page
     const results: KeywordSearchResult[] = [];
 
@@ -161,17 +158,9 @@ export class KeywordSearch {
       // Bonus: Domain match (1.5x boost)
       const pageDomain = extractDomain(page.url);
       const queryLower = query.toLowerCase();
-      if (pageDomain && pageDomain.toLowerCase().includes(queryLower)) {
+      if (pageDomain && queryLower.includes(pageDomain)) {
         score *= 1.5;
         loggers.keywordSearch.debug('Domain match bonus for:', page.url);
-      }
-
-      // Bonus: Visit frequency boost (1.0x to 1.5x multiplier based on visit count)
-      // More visited pages get a relevance boost since they're likely more important to the user
-      const visitFrequencyBoost = 1.0 + (0.5 * Math.log(page.visitCount + 1) / Math.log(maxVisitCount + 1));
-      score *= visitFrequencyBoost;
-      if (page.visitCount > 1) {
-        loggers.keywordSearch.debug(`Visit frequency boost (${page.visitCount} visits): ${visitFrequencyBoost.toFixed(2)}x for:`, page.title);
       }
 
       // Find which terms matched

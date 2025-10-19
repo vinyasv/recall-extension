@@ -269,6 +269,21 @@ export class RAGController {
   }
 
   /**
+   * Format milliseconds into human-readable time ago string
+   */
+  private formatTimeAgo(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `${days} day${days > 1 ? 's' : ''} ago`;
+    if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    if (minutes > 0) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+    return 'just now';
+  }
+
+  /**
    * Build context from passages with quality indicators
    */
   private _buildContextFromPassages(
@@ -300,6 +315,21 @@ export class RAGController {
       const sourceHeader = `[Source ${i + 1}] ${firstPassage.pageTitle} ${qualityLabel}\n`;
       const sourceUrl = `URL: ${firstPassage.pageUrl}\n`;
 
+      // Add temporal metadata for LLM reasoning about recency and frequency
+      const now = Date.now();
+      const visitedAgo = this.formatTimeAgo(now - firstPassage.timestamp);
+      const visitInfo = firstPassage.visitCount > 1
+        ? ` | Visited ${firstPassage.visitCount} times`
+        : '';
+      const lastAccessedInfo = firstPassage.lastAccessed
+        ? ` | Last accessed: ${this.formatTimeAgo(now - firstPassage.lastAccessed)}`
+        : '';
+      const dwellInfo = firstPassage.dwellTime > 60
+        ? ` | Time on page: ${Math.round(firstPassage.dwellTime / 60)} min`
+        : '';
+
+      const metadata = `Visited: ${visitedAgo}${visitInfo}${lastAccessedInfo}${dwellInfo}\n`;
+
       // Combine passages from this page
       const passageTexts = pagePassages
         .map((p) => {
@@ -312,15 +342,16 @@ export class RAGController {
 
       const sourceContent = passageTexts + '\n\n';
 
-      const fullSource = sourceHeader + sourceUrl + sourceContent;
+      const fullSource = sourceHeader + sourceUrl + metadata + sourceContent;
 
       // Check if adding this source would exceed max length
       if (currentLength + fullSource.length > maxLength) {
-        // Try to fit at least the header and URL with one truncated passage
-        const remainingSpace = maxLength - currentLength - sourceHeader.length - sourceUrl.length;
+        // Try to fit at least the header, URL, and metadata with one truncated passage
+        const headerSize = sourceHeader.length + sourceUrl.length + metadata.length;
+        const remainingSpace = maxLength - currentLength - headerSize;
         if (remainingSpace > 200) {
           const truncatedContent = sourceContent.substring(0, remainingSpace - 20) + '...\n\n';
-          context += sourceHeader + sourceUrl + truncatedContent;
+          context += sourceHeader + sourceUrl + metadata + truncatedContent;
         }
         break;
       }

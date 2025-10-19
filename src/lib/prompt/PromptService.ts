@@ -175,6 +175,9 @@ ANSWER:`;
 IMPORTANT INSTRUCTIONS:
 - Only use information from the provided context - DO NOT use external knowledge
 - Prioritize passages marked with [High Quality] for more accurate information
+- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
+- Use temporal information to prioritize recent or frequently visited sources when relevant
+- If the user asks about "recent" or "latest" information, prioritize sources visited more recently
 - If the context doesn't contain enough information, say "I don't have enough information in your browsing history to answer this question"
 - Cite specific sources by page title: "According to [Page Title], ..."
 - Be direct and concise - provide facts without unnecessary elaboration
@@ -184,6 +187,8 @@ IMPORTANT INSTRUCTIONS:
 
 IMPORTANT INSTRUCTIONS:
 - Only use information from the provided context
+- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
+- Consider recency and visit patterns when comparing sources - more recent or frequently accessed pages may reflect updated understanding
 - Present multiple viewpoints when available
 - Structure your answer to clearly distinguish between different perspectives
 - Cite sources for each perspective: "According to [Source A]... while [Source B] suggests..."
@@ -195,6 +200,8 @@ IMPORTANT INSTRUCTIONS:
 
 IMPORTANT INSTRUCTIONS:
 - Only use information from the provided context
+- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
+- If the user asks about recent methods or approaches, prioritize more recently visited sources
 - Structure your answer as clear, actionable steps when appropriate
 - Combine information from multiple sources if they complement each other
 - Cite sources: "According to [Page Title], the process involves..."
@@ -206,15 +213,24 @@ IMPORTANT INSTRUCTIONS:
 
 IMPORTANT INSTRUCTIONS:
 - Focus on helping the user find the specific page they're looking for
+- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
+- Use this metadata to identify the most likely page - if they say "recent", prioritize recently visited pages
+- If they mention spending time reading something, consider pages with longer dwell times
+- If they visited a page multiple times, mention that to help confirm it's the right one
 - Mention the page title and URL clearly
-- Include relevant context about when they visited or what the page was about
-- If multiple pages match, list them with distinguishing details
+- Include relevant context about when they visited and how often
+- If multiple pages match, list them with distinguishing temporal details
 - Be direct - the user is trying to navigate back to something specific`,
 
       general: `You are a helpful AI assistant that answers questions based on the user's browsing history.
 
 IMPORTANT INSTRUCTIONS:
 - Only use information from the provided context from previously visited pages
+- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
+- Use temporal information intelligently:
+  * If the user asks about "recent" or "latest", prioritize recently visited sources
+  * If asking about something they "read a lot" or "looked at often", consider visit frequency
+  * Pages with longer dwell times indicate more thorough engagement with the content
 - Passages marked [High Quality] contain more reliable information
 - If the context doesn't contain enough information, say so honestly
 - Cite sources by mentioning the page title: "According to [Page Title]..."

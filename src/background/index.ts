@@ -1,5 +1,5 @@
 /**
- * Recall Background Service Worker
+ * Memex Background Service Worker
  * Handles extension lifecycle and coordinates background tasks
  */
 
@@ -7,17 +7,13 @@ import { embeddingService } from '../lib/embeddings/EmbeddingService';
 import { vectorStore } from '../lib/storage/VectorStore';
 import { hybridSearch } from '../lib/search/HybridSearch';
 import { summarizerService } from '../lib/summarizer/SummarizerService';
+import { ragController } from '../lib/rag/RAGController';
 import { TabMonitor } from './TabMonitor';
 import { indexingQueue } from './IndexingQueue';
 import { indexingPipeline } from './IndexingPipeline';
 import { offscreenManager } from './OffscreenManager';
-import { ragController } from '../lib/rag/RAGController';
-import { loggers } from '../lib/utils/logger';
 
-loggers.background.info('Background service worker started');
-
-// Build-time env guard (Vite replaces import.meta.env); TS type-safe via any
-const isProd = (import.meta as any).env?.PROD === true;
+console.log('[Memex] Background service worker started');
 
 // Initialize Phase 3 components
 const tabMonitor = new TabMonitor();
@@ -31,27 +27,27 @@ let initializationPromise: Promise<void> | null = null;
  * Initialize the extension when installed or updated
  */
 chrome.runtime.onInstalled.addListener(async (details) => {
-  loggers.background.info('Extension installed/updated:', details.reason);
+  console.log('[Memex] Extension installed/updated:', details.reason);
 
   if (details.reason === 'install') {
-    loggers.background.info('First install - initializing...');
+    console.log('[Memex] First install - initializing...');
 
     // Initialize database
     try {
-      loggers.background.debug('Initializing vector database...');
+      console.log('[Memex] Initializing vector database...');
       await vectorStore.initialize();
-      loggers.background.info('Vector database initialized successfully');
+      console.log('[Memex] Vector database initialized successfully');
     } catch (error) {
-      loggers.background.error('Failed to initialize database:', error);
+      console.error('[Memex] Failed to initialize database:', error);
     }
 
     // Initialize embedding service in background
     try {
-      loggers.background.debug('Pre-loading embedding model...');
+      console.log('[Memex] Pre-loading embedding model...');
       await embeddingService.initialize();
-      loggers.background.info('Embedding model loaded successfully');
+      console.log('[Memex] Embedding model loaded successfully');
     } catch (error) {
-      loggers.background.error('Failed to initialize embedding model:', error);
+      console.error('[Memex] Failed to initialize embedding model:', error);
     }
 
     // Set default configuration
@@ -64,9 +60,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       },
     });
 
-    loggers.background.info('Initialization complete');
+    console.log('[Memex] Initialization complete');
   } else if (details.reason === 'update') {
-    loggers.background.info('Extension updated from', details.previousVersion);
+    console.log('[Memex] Extension updated from', details.previousVersion);
   }
 
   // Initialize Phase 3 components (on both install and update)
@@ -79,30 +75,30 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 async function initializePhase3(): Promise<void> {
   // If already initialized, skip
   if (isInitialized) {
-    loggers.background.debug('Already initialized, skipping...');
+    console.log('[Memex] Already initialized, skipping...');
     return;
   }
 
   // If initialization is in progress, wait for it
   if (initializationPromise) {
-    loggers.background.debug('Initialization already in progress, waiting...');
+    console.log('[Memex] Initialization already in progress, waiting...');
     await initializationPromise;
     return;
   }
 
   // Create and store the initialization promise
   initializationPromise = (async () => {
-    loggers.background.info('Initializing Phase 3 components...');
+    console.log('[Memex] 🚀 Initializing Phase 3 components...');
 
   try {
     // CRITICAL: Validate Chrome AI API availability first
-    loggers.background.debug('Validating Chrome AI API availability...');
+    console.log('[Memex] 🔍 Validating Chrome AI API availability...');
     await summarizerService.initialize();
     const isAIAvailable = await summarizerService.isAIApiAvailable();
 
     if (!isAIAvailable) {
-      const errorMsg = 'Chrome AI API (Summarizer) is NOT available. This extension requires Chrome 138+ with Gemini Nano installed. Indexing will be disabled.';
-      console.error('[Recall]', errorMsg);
+      const errorMsg = '❌ Chrome AI API (Summarizer) is NOT available. This extension requires Chrome 138+ with Gemini Nano installed. Indexing will be disabled.';
+      console.error('[Memex]', errorMsg);
 
       // Set badge to indicate error
       chrome.action.setBadgeText({ text: '!' });
@@ -114,46 +110,46 @@ async function initializePhase3(): Promise<void> {
       throw new Error(errorMsg);
     }
 
-    loggers.background.info('Chrome AI API validation passed');
+    console.log('[Memex] ✅ Chrome AI API validation passed');
 
     // Initialize indexing queue
-    loggers.background.debug('Initializing indexing queue...');
+    console.log('[Memex] Initializing indexing queue...');
     await indexingQueue.initialize();
 
     // Clear any stale items from the queue (from tabs open before extension reload)
     const queueSize = indexingQueue.size();
     if (queueSize > 0) {
-      loggers.background.debug(`Clearing ${queueSize} stale items from queue (from before extension reload)`);
+      console.log(`[Memex] Clearing ${queueSize} stale items from queue (from before extension reload)`);
       await indexingQueue.clear();
     }
 
-    loggers.background.debug('Indexing queue ready');
+    console.log('[Memex] ✅ Indexing queue ready');
 
     // Initialize indexing pipeline
-    loggers.background.debug('Initializing indexing pipeline...');
+    console.log('[Memex] Initializing indexing pipeline...');
     await indexingPipeline.initialize();
-    loggers.background.debug('Indexing pipeline ready');
+    console.log('[Memex] ✅ Indexing pipeline ready');
 
     // Initialize tab monitor with callback
-    loggers.background.debug('Initializing tab monitor...');
+    console.log('[Memex] Initializing tab monitor...');
     await tabMonitor.initialize(async (tabInfo) => {
-      loggers.background.debug('Page loaded, queuing for indexing:', tabInfo.url);
+      console.log('[Memex] 📄 Page loaded, queuing for indexing:', tabInfo.url);
       await indexingQueue.add(tabInfo);
       updateBadge();
     });
-    loggers.background.debug('Tab monitor ready (indexing on page load)');
+    console.log('[Memex] ✅ Tab monitor ready (indexing on page load)');
 
     // Start queue processor
     startQueueProcessor();
-    loggers.background.debug('Queue processor started');
+    console.log('[Memex] ✅ Queue processor started');
 
-    loggers.background.info('Phase 3 initialized successfully!');
-    loggers.background.info('Ready to index pages immediately on load with Chrome AI Summarizer API');
+    console.log('[Memex] 🎉 Phase 3 initialized successfully!');
+    console.log('[Memex] Ready to index pages immediately on load with Chrome AI Summarizer API');
 
     // Mark as initialized
     isInitialized = true;
   } catch (error) {
-    console.error('[Recall] Failed to initialize Phase 3:', error);
+    console.error('[Memex] ❌ Failed to initialize Phase 3:', error);
     throw error; // Re-throw to propagate to the promise
   }
   })();
@@ -167,14 +163,14 @@ async function initializePhase3(): Promise<void> {
  */
 function startQueueProcessor(): void {
   if (queueProcessor) {
-    loggers.background.debug('Queue processor already running, skipping start');
+    console.log('[Memex] Queue processor already running, skipping start');
     return;
   }
 
   queueProcessor = setInterval(async () => {
     // Skip if already processing
     if (indexingPipeline.isCurrentlyProcessing() || indexingQueue.isCurrentlyProcessing()) {
-      loggers.background.debug('Queue processor: Skipping, already processing');
+      console.log('[Memex] 🔄 Queue processor: Skipping, already processing');
       return;
     }
 
@@ -184,7 +180,7 @@ function startQueueProcessor(): void {
       return;
     }
 
-    loggers.background.debug('Processing queued page:', next.url);
+    console.log('[Memex] 🔄 Processing queued page:', next.url);
 
     // Process the page
     indexingQueue.setProcessing(true);
@@ -200,7 +196,7 @@ function startQueueProcessor(): void {
     updateBadge();
   }, 500); // Check every 500ms for fast processing
 
-  loggers.background.debug('Queue processor started');
+  console.log('[Memex] Queue processor started');
 }
 
 /**
@@ -220,7 +216,7 @@ function updateBadge(): void {
  * Handle extension startup
  */
 chrome.runtime.onStartup.addListener(async () => {
-  loggers.background.info('Browser started, extension active');
+  console.log('[Memex] Browser started, extension active');
 
   // Reinitialize Phase 3 components on browser startup
   await initializePhase3();
@@ -230,7 +226,7 @@ chrome.runtime.onStartup.addListener(async () => {
  * Run comprehensive search metrics test
  */
 async function runSearchMetricsTest() {
-  loggers.background.debug('Starting search metrics test...');
+  console.log('[Memex] 🧪 Starting search metrics test...');
 
   // Test configuration - improved queries that actually match test content
   const testQueries = [
@@ -287,7 +283,7 @@ async function runSearchMetricsTest() {
 
   // Run tests for each query and mode
   for (const query of testQueries) {
-    loggers.background.debug(`Testing query: "${query}"`);
+    console.log(`[Memex] Testing query: "${query}"`);
 
     const queryResults: typeof results.sampleQueries[string] = {
       totalTime: 0,
@@ -335,12 +331,12 @@ async function runSearchMetricsTest() {
             similarities
           });
 
-          loggers.background.debug(`${mode} (k=${k}): ${searchResults.length} results in ${searchTime.toFixed(2)}ms (avg sim: ${avgSimilarity.toFixed(3)})`);
+          console.log(`[Memex] ${mode} (k=${k}): ${searchResults.length} results in ${searchTime.toFixed(2)}ms (avg sim: ${avgSimilarity.toFixed(3)})`);
 
           totalTests++;
 
         } catch (error) {
-          console.error(`[Recall] Search failed for query "${query}" with mode ${mode}:`, error);
+          console.error(`[Memex] Search failed for query "${query}" with mode ${mode}:`, error);
           // Still record a failed test
           const stats = modeStats.get(mode)!;
           stats.times.push(0);
@@ -416,7 +412,7 @@ async function runSearchMetricsTest() {
       : 0
   };
 
-  loggers.background.debug('Search metrics test completed:', { totalTests, avgSearchTime, thresholdRespected });
+  console.log('[Memex] 📊 Search metrics test completed:', { totalTests, avgSearchTime, thresholdRespected });
 
   return {
     results,
@@ -477,7 +473,7 @@ function createPassagesFromContent(content: string, summary: string): Array<{
  * Handle messages from other parts of the extension
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  loggers.background.debug('Received message:', message.type, 'from:', sender.tab?.id || 'popup');
+  console.log('[Memex] Received message:', message.type, 'from:', sender.tab?.id || 'popup');
 
   // Handle different message types
   switch (message.type) {
@@ -487,7 +483,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'GET_STATUS':
       // Get status including database stats
-      loggers.background.debug('GET_STATUS request received');
+      console.log('[Memex] GET_STATUS request received');
       vectorStore
         .getStats()
         .then((dbStats) => {
@@ -496,74 +492,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             cacheStats: embeddingService.getCacheStats(),
             dbStats,
           };
-          loggers.background.debug('Sending status response:', response);
+          console.log('[Memex] Sending status response:', response);
           sendResponse(response);
         })
         .catch((error) => {
-          console.error('[Recall] Failed to get stats:', error);
+          console.error('[Memex] Failed to get stats:', error);
           const response = {
             initialized: embeddingService.isInitialized(),
             cacheStats: embeddingService.getCacheStats(),
             dbStats: null,
             error: error.message,
           };
-          loggers.background.debug('Sending error response:', response);
+          console.log('[Memex] Sending error response:', response);
           sendResponse(response);
         });
       return true; // Async response
 
     case 'GET_DB_STATS':
       // Get database statistics
-      loggers.background.debug('GET_DB_STATS request received');
+      console.log('[Memex] GET_DB_STATS request received');
       vectorStore
         .getStats()
         .then((stats) => {
-          loggers.background.debug('Sending DB stats:', stats);
+          console.log('[Memex] Sending DB stats:', stats);
           sendResponse({ success: true, stats });
         })
         .catch((error) => {
-          console.error('[Recall] Failed to get DB stats:', error);
+          console.error('[Memex] Failed to get DB stats:', error);
           sendResponse({ success: false, error: error.message });
         });
       return true;
 
     case 'GET_ALL_PAGES':
-      // Get all pages (sorted by timestamp - latest first)
-      loggers.background.debug('GET_ALL_PAGES request received');
+      // Get all pages (chronologically)
+      console.log('[Memex] GET_ALL_PAGES request received');
       vectorStore
         .getAllPages()
         .then((pages) => {
-          // Sort by timestamp descending (latest first)
-          const sortedPages = pages.sort((a, b) => b.timestamp - a.timestamp);
-          loggers.background.debug('Sending', sortedPages.length, 'pages (sorted by timestamp)');
-          sendResponse({ success: true, pages: sortedPages });
+          console.log('[Memex] Sending', pages.length, 'pages');
+          sendResponse({ success: true, pages });
         })
         .catch((error) => {
-          console.error('[Recall] Failed to get all pages:', error);
+          console.error('[Memex] Failed to get all pages:', error);
           sendResponse({ success: false, error: error.message });
         });
       return true;
 
     case 'CLEAR_HISTORY':
       // Clear all history from IndexedDB
-      loggers.background.debug('CLEAR_HISTORY request received');
+      console.log('[Memex] CLEAR_HISTORY request received');
       vectorStore
         .clearAll()
         .then(() => {
-          loggers.background.info('All history cleared successfully');
+          console.log('[Memex] All history cleared successfully');
           // Also clear the indexing queue to remove stale items
           indexingQueue
             .clear()
             .then(() => {
-              loggers.background.debug('Indexing queue cleared after history wipe');
+              console.log('[Memex] Indexing queue cleared after history wipe');
             })
             .catch((queueError) => {
-              console.error('[Recall] Failed to clear indexing queue:', queueError);
+              console.error('[Memex] Failed to clear indexing queue:', queueError);
             });
           sendResponse({ success: true });
         })
         .catch((error) => {
-          console.error('[Recall] Failed to clear history:', error);
+          console.error('[Memex] Failed to clear history:', error);
           sendResponse({ success: false, error: error.message });
         });
       return true;
@@ -586,53 +580,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           sendResponse({ success: true, results: pages });
         } catch (error) {
-          console.error('[Recall] Search failed:', error);
+          console.error('[Memex] Search failed:', error);
           sendResponse({ success: false, error: (error as Error).message });
         }
       })();
       return true;
 
     case 'ADD_TEST_PAGE':
-      if (!isProd) {
-        // Add a test page to the database (dev-only)
-        (async () => {
-          try {
-            const { url, title, content, summary } = message;
+      // Add a test page to the database (for development/testing)
+      (async () => {
+        try {
+          const { url, title, content, summary } = message;
 
-            // Create multiple passages from content for better semantic matching
-            const passages = createPassagesFromContent(content, summary);
+          // Create multiple passages from content for better semantic matching
+          const passages = createPassagesFromContent(content, summary);
 
-            // Generate embedding from title + summary + content snippet
-            // Use first 500 characters of content for better semantic context
-            const contentSnippet = content.length > 500 ? content.substring(0, 500) : content;
-            const embeddingText = `${title}. ${summary} ${contentSnippet}`;
-            const embedding = await embeddingService.generateEmbedding(embeddingText);
+          // Generate embedding from title + summary + content snippet
+          // Use first 500 characters of content for better semantic context
+          const contentSnippet = content.length > 500 ? content.substring(0, 500) : content;
+          const embeddingText = `${title}. ${summary} ${contentSnippet}`;
+          const embedding = await embeddingService.generateEmbedding(embeddingText);
 
-            // Add to database
-            const id = await vectorStore.addPage({
-              url,
-              title,
-              content,
-              summary,
-              passages,
-              embedding,
-              timestamp: Date.now(),
-              dwellTime: 60,
-              lastAccessed: 0,
-              visitCount: 1,
-            });
+          // Add to database
+          const id = await vectorStore.addPage({
+            url,
+            title,
+            content,
+            summary,
+            passages,
+            embedding,
+            timestamp: Date.now(),
+            dwellTime: 60,
+            lastAccessed: 0,
+            visitCount: 1,
+          });
 
-            sendResponse({ success: true, id });
-          } catch (error) {
-            console.error('[Recall] Failed to add test page:', error);
-            sendResponse({ success: false, error: (error as Error).message });
-          }
-        })();
-        return true;
-      } else {
-        sendResponse({ success: false, error: 'Not available in production' });
-        return false;
-      }
+          sendResponse({ success: true, id });
+        } catch (error) {
+          console.error('[Memex] Failed to add test page:', error);
+          sendResponse({ success: false, error: (error as Error).message });
+        }
+      })();
+      return true;
 
     case 'CLEAR_DATABASE':
       // Clear all data from database (for testing)
@@ -666,7 +655,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await vectorStore.updatePage(pageId, { lastAccessed: Date.now() });
           sendResponse({ success: true });
         } catch (error) {
-          console.error('[Recall] Failed to update lastAccessed:', error);
+          console.error('[Memex] Failed to update lastAccessed:', error);
           sendResponse({ success: false, error: (error as Error).message });
         }
       })();
@@ -691,7 +680,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (queueProcessor) {
         clearInterval(queueProcessor);
         queueProcessor = null;
-        loggers.background.info('Indexing paused');
+        console.log('[Memex] Indexing paused');
         sendResponse({ success: true });
       } else {
         sendResponse({ success: false, error: 'Already paused' });
@@ -723,52 +712,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   
     case 'RUN_SEARCH_METRICS_TEST':
-      if (!isProd) {
-        // Run comprehensive search metrics test (dev-only)
-        (async () => {
-          try {
-            loggers.background.debug('Running search metrics test...');
+      // Run comprehensive search metrics test
+      (async () => {
+        try {
+          console.log('[Memex] Running search metrics test...');
 
-            // Get database stats first
-            const dbStats = await vectorStore.getStats();
-            if (dbStats.totalPages === 0) {
-              throw new Error('No indexed pages found. Please browse some websites first.');
-            }
-
-            const metrics = await runSearchMetricsTest();
-
-            loggers.background.debug('Search metrics test completed:', metrics);
-            sendResponse({ success: true, metrics });
-          } catch (error) {
-            console.error('[Recall] Search metrics test failed:', error);
-            sendResponse({
-              success: false,
-              error: (error as Error).message,
-            });
+          // Get database stats first
+          const dbStats = await vectorStore.getStats();
+          if (dbStats.totalPages === 0) {
+            throw new Error('No indexed pages found. Please browse some websites first.');
           }
-        })();
-        return true;
-      } else {
-        sendResponse({ success: false, error: 'Not available in production' });
-        return false;
-      }
+
+          const metrics = await runSearchMetricsTest();
+
+          console.log('[Memex] Search metrics test completed:', metrics);
+          sendResponse({ success: true, metrics });
+        } catch (error) {
+          console.error('[Memex] Search metrics test failed:', error);
+          sendResponse({
+            success: false,
+            error: (error as Error).message,
+          });
+        }
+      })();
+      return true;
 
     case 'TEST_SUMMARIZER':
       // Test Chrome Summarizer API with sample text
       (async () => {
         try {
           const { text, url, title, maxLength } = message;
-          loggers.background.debug('Testing summarizer with:', { textLength: text.length, url, title, maxLength });
+          console.log('[Memex] Testing summarizer with:', { textLength: text.length, url, title, maxLength });
 
           // Initialize summarizer and check API availability
           await summarizerService.initialize();
           const isApiAvailable = await summarizerService.isAIApiAvailable();
-          loggers.background.debug('API availability check result:', isApiAvailable);
+          console.log('[Memex] API availability check result:', isApiAvailable);
 
           const summary = await summarizerService.summarizeForSearch(text, url, title, maxLength);
           const apiType = isApiAvailable ? 'Chrome AI API' : 'Extractive Fallback';
 
-          loggers.background.debug('Summarizer test successful:', {
+          console.log('[Memex] Summarizer test successful:', {
             summaryLength: summary.length,
             apiType,
             summaryPreview: summary.substring(0, 100) + '...'
@@ -780,15 +764,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             apiType,
           };
 
-          loggers.background.debug('Sending TEST_SUMMARIZER response:', response);
+          console.log('[Memex] Sending TEST_SUMMARIZER response:', response);
           sendResponse(response);
         } catch (error) {
-          console.error('[Recall] Summarizer test failed:', error);
+          console.error('[Memex] Summarizer test failed:', error);
           const errorResponse = {
             success: false,
             error: (error as Error).message,
           };
-          loggers.background.debug('Sending TEST_SUMMARIZER error response:', errorResponse);
+          console.log('[Memex] Sending TEST_SUMMARIZER error response:', errorResponse);
           sendResponse(errorResponse);
         }
       })();
@@ -799,7 +783,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { text } = message;
-          loggers.background.debug('Testing embeddings with:', { textLength: text.length });
+          console.log('[Memex] Testing embeddings with:', { textLength: text.length });
 
           // Ensure embedding service is initialized
           await embeddingService.initialize();
@@ -808,7 +792,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const embedding = await embeddingService.generateEmbedding(text);
           const generationTime = performance.now() - startTime;
 
-          loggers.background.debug('Embedding test successful:', {
+          console.log('[Memex] Embedding test successful:', {
             dimensions: embedding.length,
             generationTime: generationTime.toFixed(2)
           });
@@ -821,7 +805,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             model: 'all-MiniLM-L6-v2'
           });
         } catch (error) {
-          console.error('[Recall] Embedding test failed:', error);
+          console.error('[Memex] Embedding test failed:', error);
           sendResponse({
             success: false,
             error: (error as Error).message,
@@ -835,7 +819,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { queries } = message;
-          loggers.background.debug('Testing hybrid search with queries:', queries);
+          console.log('[Memex] Testing hybrid search with queries:', queries);
 
           const results = [];
 
@@ -858,14 +842,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
           }
 
-          loggers.background.debug('Hybrid search test successful:', results);
+          console.log('[Memex] Hybrid search test successful:', results);
 
           sendResponse({
             success: true,
             results
           });
         } catch (error) {
-          console.error('[Recall] Hybrid search test failed:', error);
+          console.error('[Memex] Hybrid search test failed:', error);
           sendResponse({
             success: false,
             error: (error as Error).message,
@@ -876,152 +860,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'SUMMARIZER_RESPONSE':
       // Handle response from offscreen summarizer
-      loggers.background.debug('Received summarizer response:', message.response.id);
+      console.log('[Memex] Received summarizer response:', message.response.id);
       offscreenManager.handleResponse(message.response);
+      return false;
+
+    case 'PROMPT_RESPONSE':
+      // Handle response from offscreen Prompt API
+      console.log('[Memex] Received prompt response:', message.response.id);
+      offscreenManager.handlePromptResponse(message.response);
       return false;
 
     case 'OFFSCREEN_SUMMARIZER_READY':
       // Handle ready signal from offscreen document
-      loggers.background.debug('Offscreen summarizer is ready');
+      console.log('[Memex] Offscreen summarizer is ready');
       return false;
-
-    case 'PROMPT_RESPONSE':
-      // Handle response from offscreen prompt API
-      loggers.background.debug('Received prompt response:', message.response.id);
-      offscreenManager.handlePromptResponse(message.response);
-      return false;
-
-    case 'RAG_QUERY':
-      // Answer a question using RAG (Retrieval-Augmented Generation)
-      (async () => {
-        try {
-          const { question, options } = message;
-          loggers.background.debug('RAG query received:', question);
-
-          const result = await ragController.answerQuestion(question, options);
-
-          sendResponse({
-            success: true,
-            answer: result.answer,
-            sources: result.sources,
-            timings: {
-              total: result.processingTime,
-              search: result.searchTime,
-              generation: result.generationTime,
-            },
-          });
-        } catch (error) {
-          console.error('[Recall] RAG query failed:', error);
-          sendResponse({
-            success: false,
-            error: (error as Error).message,
-          });
-        }
-      })();
-      return true;
-
-    case 'RAG_QUERY_STREAMING':
-      // Answer a question using RAG with streaming response
-      (async () => {
-        try {
-          const { question, options } = message;
-          loggers.background.debug('RAG streaming query received:', question);
-
-          // Note: Streaming requires a different communication pattern
-          // We'll send chunks via separate messages
-          const stream = ragController.answerQuestionStreaming(question, options);
-
-          for await (const item of stream) {
-            if (item.type === 'chunk') {
-              // Send chunk back to UI
-              chrome.runtime.sendMessage({
-                type: 'RAG_STREAM_CHUNK',
-                requestId: message.requestId,
-                chunk: item.content,
-              }).catch(error => {
-                console.error('[Recall] Failed to send RAG chunk:', error);
-              });
-            } else if (item.type === 'complete') {
-              // Send completion with metadata
-              chrome.runtime.sendMessage({
-                type: 'RAG_STREAM_COMPLETE',
-                requestId: message.requestId,
-                sources: item.sources,
-                timings: item.timings,
-              }).catch(error => {
-                console.error('[Recall] Failed to send RAG completion:', error);
-              });
-            }
-          }
-
-          sendResponse({ success: true, message: 'Streaming started' });
-        } catch (error) {
-          console.error('[Recall] RAG streaming query failed:', error);
-          chrome.runtime.sendMessage({
-            type: 'RAG_STREAM_ERROR',
-            requestId: message.requestId,
-            error: (error as Error).message,
-          }).catch(err => {
-            console.error('[Recall] Failed to send RAG error:', err);
-          });
-          sendResponse({ success: false, error: (error as Error).message });
-        }
-      })();
-      return true;
 
     case 'CHECK_RAG_AVAILABILITY':
-      // Check if RAG functionality is available
+      // Check if RAG (Retrieval-Augmented Generation) is available
       (async () => {
         try {
           const available = await ragController.isAvailable();
-          sendResponse({ success: true, available });
+          sendResponse({ available });
         } catch (error) {
-          console.error('[Recall] Failed to check RAG availability:', error);
-          sendResponse({ success: false, available: false, error: (error as Error).message });
+          console.error('[Memex] Failed to check RAG availability:', error);
+          sendResponse({ available: false });
         }
       })();
-      return true;
+      return true; // Keep message channel open for async response
 
-    case 'MANUAL_INDEX_PAGE':
-      // Manually index a page (for eval system)
+    case 'RAG_QUERY':
+      // Answer a question using RAG
       (async () => {
         try {
-          const { pageData } = message;
-          loggers.background.debug('Manual indexing request for:', pageData.url);
-
-          // Create passages from content
-          const summary = pageData.content.substring(0, 500); // Quick summary for eval
-          const passages = createPassagesFromContent(pageData.content, summary);
-
-          // Generate embedding
-          const embeddingText = `${pageData.title}. ${summary}`;
-          const embedding = await embeddingService.generateEmbedding(embeddingText);
-
-          // Add to database
-          const id = await vectorStore.addPage({
-            url: pageData.url,
-            title: pageData.title,
-            content: pageData.content,
-            summary,
-            passages,
-            embedding,
-            timestamp: Date.now(),
-            dwellTime: 60,
-            lastAccessed: 0,
-            visitCount: 1,
-          });
-
-          loggers.background.debug('Page indexed successfully:', id);
-          sendResponse({ success: true, id });
+          const { question, options } = message;
+          const result = await ragController.answerQuestion(question, options);
+          sendResponse({ success: true, result });
         } catch (error) {
-          console.error('[Recall] Manual indexing failed:', error);
-          sendResponse({ success: false, error: (error as Error).message });
+          console.error('[Memex] RAG query failed:', error);
+          sendResponse({
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
         }
       })();
-      return true;
+      return true; // Keep message channel open for async response
 
     default:
-      console.warn('[Recall] Unknown message type:', message.type);
+      console.warn('[Memex] Unknown message type:', message.type);
       sendResponse({ error: 'Unknown message type' });
       return false;
   }
@@ -1033,7 +918,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 const KEEP_ALIVE_INTERVAL = 20000; // 20 seconds
 setInterval(() => {
-  loggers.background.debug('Service worker keepalive ping');
+  console.log('[Memex] Service worker keepalive ping');
 }, KEEP_ALIVE_INTERVAL);
 
 /**
@@ -1041,7 +926,7 @@ setInterval(() => {
  */
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'toggle-sidebar') {
-    loggers.background.debug('Keyboard shortcut (Cmd+Shift+E) triggered from background');
+    console.log('[Memex] Keyboard shortcut (Cmd+Shift+E) triggered from background');
     await toggleSidebarOnActiveTab();
   }
 });
@@ -1050,7 +935,7 @@ chrome.commands.onCommand.addListener(async (command) => {
  * Handle extension icon click
  */
 chrome.action.onClicked.addListener(async (tab) => {
-  loggers.background.debug('Extension icon clicked on tab:', tab.id, tab.url);
+  console.log('[Memex] Extension icon clicked on tab:', tab.id, tab.url);
   await toggleSidebarOnActiveTab();
 });
 
@@ -1065,7 +950,7 @@ async function toggleSidebarOnActiveTab(): Promise<void> {
     const activeTab = tabs[0];
 
     if (!activeTab?.id) {
-      console.warn('[Recall] No active tab found');
+      console.warn('[Memex] No active tab found');
       return;
     }
 
@@ -1073,34 +958,34 @@ async function toggleSidebarOnActiveTab(): Promise<void> {
     if (activeTab.url?.startsWith('chrome://') ||
         activeTab.url?.startsWith('chrome-extension://') ||
         activeTab.url?.startsWith('edge://')) {
-      console.warn('[Recall] Cannot run on restricted pages (chrome://, chrome-extension://, etc)');
+      console.warn('[Memex] Cannot run on restricted pages (chrome://, chrome-extension://, etc)');
       return;
     }
 
-    loggers.background.debug('Sending TOGGLE_SIDEBAR to tab:', activeTab.id, activeTab.url);
+    console.log('[Memex] Sending TOGGLE_SIDEBAR to tab:', activeTab.id, activeTab.url);
 
     // Try to send message to content script
     try {
       await chrome.tabs.sendMessage(activeTab.id, { type: 'TOGGLE_SIDEBAR' });
-      loggers.background.debug('TOGGLE_SIDEBAR message sent successfully');
+      console.log('[Memex] TOGGLE_SIDEBAR message sent successfully');
     } catch (error: any) {
       if (error.message?.includes('Could not establish connection') ||
           error.message?.includes('Receiving end does not exist')) {
-        console.error('[Recall] Content script not responding. Try refreshing the page.');
-        console.error('[Recall] If the problem persists, the page may block content scripts.');
+        console.error('[Memex] Content script not responding. Try refreshing the page.');
+        console.error('[Memex] If the problem persists, the page may block content scripts.');
       } else {
         throw error;
       }
     }
   } catch (error) {
-    console.error('[Recall] Error toggling sidebar:', error);
+    console.error('[Memex] Error toggling sidebar:', error);
   }
 }
 
-loggers.background.info('Background service worker ready');
+console.log('[Memex] Background service worker ready');
 
 // Initialize Phase 3 components immediately when service worker starts
 // This ensures initialization happens even when extension is reloaded during development
 initializePhase3().catch((error) => {
-  console.error('[Recall] Failed to initialize on service worker start:', error);
+  console.error('[Memex] Failed to initialize on service worker start:', error);
 });

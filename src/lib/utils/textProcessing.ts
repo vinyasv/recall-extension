@@ -35,7 +35,7 @@ export const FIELD_WEIGHTS = {
 export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
-    .replace(/[^a-z0-9\s\.]/g, ' ') // Replace non-alphanumeric with spaces, preserve dots for tokens like react.useeffect
+    .replace(/[^a-z0-9\s]/g, ' ') // Replace non-alphanumeric with spaces
     .split(/\s+/)
     .filter(term => term.length >= 3) // Filter short terms
     .filter(term => !STOP_WORDS.has(term)); // Filter stop words
@@ -84,9 +84,6 @@ export function extractDomain(url: string): string {
 export function isExactPhraseMatch(query: string, text: string): boolean {
   const normalizedQuery = query.toLowerCase().trim();
   const normalizedText = text.toLowerCase();
-  if (normalizedQuery.startsWith('"') && normalizedQuery.endsWith('"')) {
-    return normalizedText.includes(normalizedQuery.slice(1, -1));
-  }
   return normalizedText.includes(normalizedQuery);
 }
 

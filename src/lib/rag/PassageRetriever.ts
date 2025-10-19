@@ -136,6 +136,9 @@ export class PassageRetriever {
         similarity: candidate.similarity,
         combinedScore: candidate.combinedScore,
         timestamp: candidate.page.timestamp,
+        visitCount: candidate.page.visitCount,
+        lastAccessed: candidate.page.lastAccessed,
+        dwellTime: candidate.page.dwellTime,
       }));
 
       loggers.ragController.debug(`Selected ${results.length} passages after diversity filtering`);

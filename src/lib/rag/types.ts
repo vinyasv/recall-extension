@@ -24,6 +24,9 @@ export interface RetrievedPassage {
   similarity: number;
   combinedScore: number; // (similarity * 0.7) + (quality * 0.3)
   timestamp: number;
+  visitCount: number;
+  lastAccessed: number;
+  dwellTime: number;
 }
 
 /**
