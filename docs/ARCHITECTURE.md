@@ -21,10 +21,11 @@
 
 ### Key Features
 
+- **RAG-Powered Q&A**: Natural language question answering over browsing history using Chrome Prompt API (Gemini Nano)
 - **Hybrid Search**: Combines semantic understanding with keyword precision using Reciprocal Rank Fusion (RRF)
-- **Passage-Based Chunking**: Chrome-inspired document segmentation for better search granularity
+- **Passage-Based RAG**: Passage-level embeddings and retrieval for fine-grained semantic search
+- **Intent Classification**: Hybrid regex + LLM classification to optimize retrieval strategy
 - **On-Device ML**: 384-dimensional embeddings via Transformers.js + WebAssembly
-- **Local Summarization**: Chrome Summarizer API (Gemini Nano) with fallback
 - **Zero Server Communication**: Complete privacy - no data leaves your device
 - **Smart Indexing**: Dwell time tracking and intelligent queue management
 
@@ -35,9 +36,11 @@
 - **Build Tool**: Vite with multi-entry configuration
 - **ML Framework**: Transformers.js (Hugging Face) with WASM backend
 - **Embedding Model**: all-MiniLM-L6-v2 (384 dimensions)
-- **Summarization**: Chrome Summarizer API (Gemini Nano)
+- **RAG System**: Chrome Prompt API (Gemini Nano) for answer generation
+- **Intent Classification**: Hybrid regex patterns + Chrome Prompt API
+- **Summarization**: Chrome Summarizer API (optional, display-only, with passage fallback)
 - **Storage**: IndexedDB (via VectorStore abstraction)
-- **Search**: Custom hybrid engine (semantic + TF-IDF + RRF)
+- **Search**: Custom hybrid engine (semantic + TF-IDF + RRF) + Passage-based RAG
 
 ---
 
@@ -95,12 +98,21 @@ src/
 ├── lib/                    # Core libraries (singletons)
 │   ├── embeddings/         # Embedding generation
 │   │   └── EmbeddingService.ts
-│   ├── summarizer/         # Text summarization
+│   ├── summarizer/         # Text summarization (display-only)
 │   │   └── SummarizerService.ts
+│   ├── prompt/             # Chrome Prompt API (RAG answer generation)
+│   │   └── PromptService.ts
+│   ├── rag/                # RAG components
+│   │   ├── RAGController.ts          # Main RAG orchestrator
+│   │   ├── PassageRetriever.ts       # Passage-level semantic search
+│   │   ├── IntentClassificationService.ts  # Hybrid intent classification
+│   │   ├── QueryIntentClassifier.ts  # Regex-based intent patterns
+│   │   ├── LLMIntentClassifier.ts    # LLM-based intent classification
+│   │   └── types.ts
 │   ├── storage/            # Data persistence
 │   │   ├── VectorStore.ts
 │   │   └── types.ts
-│   ├── search/             # Search engines
+│   ├── search/             # Search engines (hybrid search)
 │   │   ├── HybridSearch.ts
 │   │   ├── VectorSearch.ts
 │   │   ├── KeywordSearch.ts
@@ -161,21 +173,26 @@ src/
 │  ├─ Generate passages (DocumentChunker)                  │
 │  └─ Validate URL consistency                             │
 │                                                           │
-│  Stage 2: Summarization                                  │
-│  ├─ Send text to OffscreenManager                        │
-│  ├─ Offscreen doc uses Chrome Summarizer API             │
-│  ├─ Generate concise summary (or fallback to truncate)   │
-│  └─ Return summary to pipeline                           │
-│                                                           │
-│  Stage 3: Embedding Generation                           │
-│  ├─ Send summary to EmbeddingService                     │
+│  Stage 2: Passage Embeddings (PRIMARY - CRITICAL)        │
+│  ├─ Send each passage to EmbeddingService                │
 │  ├─ Load all-MiniLM-L6-v2 model (cached)                │
-│  ├─ Generate 384-dim Float32Array embedding              │
-│  └─ Cache result in LRU cache                            │
+│  ├─ Generate 384-dim Float32Array per passage            │
+│  ├─ Cache results in LRU cache                           │
+│  └─ FAIL if any passage embedding fails (required)       │
 │                                                           │
-│  Stage 4: Storage                                        │
-│  ├─ Serialize embedding (Float32Array → ArrayBuffer)     │
-│  ├─ Store PageRecord with passages in IndexedDB          │
+│  Stage 3: Page-Level Embedding (FALLBACK)                │
+│  ├─ Combine title + top 5 passages (quality > 0.3)       │
+│  ├─ Generate single page-level embedding                 │
+│  └─ Used for page-level search only (not RAG)            │
+│                                                           │
+│  Stage 4: Display Summary (OPTIONAL)                     │
+│  ├─ Try Chrome Summarizer API via OffscreenManager       │
+│  ├─ On failure: fallback to best passages                │
+│  └─ Used for display only, not search/RAG                │
+│                                                           │
+│  Stage 5: Storage                                        │
+│  ├─ Serialize embeddings (Float32Array → ArrayBuffer)    │
+│  ├─ Store PageRecord with passage embeddings             │
 │  └─ Update search indexes                                │
 └──────┬───────────────────────────────────────────────────┘
        │
@@ -186,7 +203,7 @@ src/
 └──────────────────┘
 ```
 
-### Search Query Flow
+### Search Query Flow (Hybrid Search)
 
 ```
 ┌──────────────┐
@@ -226,6 +243,85 @@ src/
                   └──────────────┘
 ```
 
+### RAG Query Flow (Question Answering)
+
+```
+┌──────────────┐
+│ User asks    │
+│ question     │
+└──────┬───────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│ Step 1: Intent Classification (IntentClassificationSvc)  │
+│  ┌────────────────┐         ┌─────────────────┐         │
+│  │ Regex Patterns │─high────▶ Intent Result   │         │
+│  │ (fast)         │ conf.   │ - factual       │         │
+│  └────────┬───────┘         │ - comparison    │         │
+│           │ low confidence  │ - howto         │         │
+│           ▼                 │ - navigation    │         │
+│  ┌────────────────┐         │ - general       │         │
+│  │ LLM Classifier │────────▶│                 │         │
+│  │ (Prompt API)   │         └─────────────────┘         │
+│  └────────────────┘                                      │
+└──────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│ Step 2: Passage Retrieval (PassageRetriever)             │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │ 1. Generate query embedding (384-dim)             │   │
+│  │ 2. Search ALL passage embeddings (not pages)      │   │
+│  │ 3. Calculate cosine similarity per passage        │   │
+│  │ 4. Combine similarity + quality score             │   │
+│  │ 5. Apply diversity constraints:                   │   │
+│  │    - Max passages per page (1-2, intent-based)    │   │
+│  │    - Max pages per domain (2-3)                   │   │
+│  │ 6. Return top K passages (3-10, intent-based)     │   │
+│  └───────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│ Step 3: Context Building (RAGController)                 │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │ For each source page:                             │   │
+│  │  [Source N] Page Title                            │   │
+│  │  URL: https://...                                 │   │
+│  │  Visited: 2 days ago | Visited 3 times            │   │
+│  │  Last accessed: 1 day ago | Time on page: 5 min   │   │
+│  │                                                    │   │
+│  │  [Passage 1 text...]                              │   │
+│  │  [Passage 2 text...]                              │   │
+│  │                                                    │   │
+│  │ Max context length: 2000-4000 chars (intent)      │   │
+│  └───────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│ Step 4: Answer Generation (PromptService)                │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │ 1. Build prompt with:                             │   │
+│  │    - Intent-specific system prompt                │   │
+│  │    - Retrieved context with temporal metadata     │   │
+│  │    - User question                                │   │
+│  │ 2. Send to Chrome Prompt API (Gemini Nano)        │   │
+│  │ 3. Stream or generate complete answer             │   │
+│  │ 4. LLM cites sources as [Source N]                │   │
+│  └───────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────┐
+│ Natural      │
+│ language     │
+│ answer with  │
+│ source       │
+│ citations    │
+└──────────────┘
+```
+
 ---
 
 ## Component Details
@@ -256,6 +352,7 @@ TabMonitor → IndexingQueue → IndexingPipeline → VectorStore
 **Message Handlers**:
 ```typescript
 SEARCH_QUERY          → HybridSearch.search()
+RAG_QUERY             → RAGController.answerQuestion()
 GET_DB_STATS          → VectorStore.getStats()
 GET_ALL_PAGES         → VectorStore.getAllPages()
 CLEAR_HISTORY         → VectorStore.clear()
@@ -310,43 +407,67 @@ getStatus(): QueueStatus
 
 ### IndexingPipeline (background/IndexingPipeline.ts)
 
-**Role**: Orchestrate 4-stage indexing workflow
+**Role**: Orchestrate 5-stage indexing workflow
 
 **Stage 1: Content Extraction**
 ```typescript
-// Inject content script
-chrome.scripting.executeScript()
-
+// Inject content script (via manifest, automatically available)
 // Send extraction request
 chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_CONTENT' })
 
 // Receive: { title, content, url, passages[] }
+// passages = DocumentChunker output with quality scores
 ```
 
-**Stage 2: Summarization**
+**Stage 2: Passage Embeddings (PRIMARY - CRITICAL)**
 ```typescript
-// Send to offscreen manager
-const summary = await offscreenManager.summarize(content)
+// Generate embedding for EACH passage
+const passagesWithEmbeddings = await this._generatePassageEmbeddings(passages)
 
-// Fallback: truncate to 200 chars if API unavailable
+// Batch processing (5 passages at a time)
+for (const passage of passages) {
+  passage.embedding = await embeddingService.generateEmbedding(passage.text)
+}
+
+// FAIL if any passage embedding fails - no silent fallback
+// All passages MUST have embeddings for RAG to work
 ```
 
-**Stage 3: Embedding Generation**
+**Stage 3: Page-Level Embedding (FALLBACK)**
 ```typescript
-// Generate embedding for summary
-const embedding = await embeddingService.generateEmbedding(summary)
+// Generate single page-level embedding from title + top 5 passages
+const topPassages = passagesWithEmbeddings
+  .filter(p => p.quality > 0.3)
+  .sort((a, b) => b.quality - a.quality)
+  .slice(0, 5)
 
-// Returns: Float32Array(384)
+const pageText = [title, ...topPassages.map(p => p.text)].join('. ')
+const pageEmbedding = await embeddingService.generateEmbedding(pageText)
+
+// Used for page-level search only (not RAG)
 ```
 
-**Stage 4: Storage**
+**Stage 4: Display Summary (OPTIONAL)**
 ```typescript
-// Create PageRecord
+// Try Chrome Summarizer API
+try {
+  const summary = await summarizerService.summarizeForSearch(content, url, title, 300)
+} catch (error) {
+  // Graceful fallback: use best passages for summary
+  summary = this._createSummaryFromPassages(passagesWithEmbeddings)
+}
+
+// Summary is for display only - NOT used for search or RAG
+```
+
+**Stage 5: Storage**
+```typescript
+// Create PageRecord with passage embeddings
 const record: PageRecord = {
   id: uuid(),
   url, title, content, summary,
-  embedding,
-  passages: Passage[],
+  embedding: pageEmbedding,        // Page-level (fallback)
+  passages: passagesWithEmbeddings, // Each has .embedding (PRIMARY)
   timestamp: Date.now(),
   dwellTime, lastAccessed
 }
@@ -443,6 +564,264 @@ interface Passage {
   wordCount: number
   qualityScore: number
   position: number
+}
+```
+
+---
+
+## RAG Components
+
+### RAGController (lib/rag/RAGController.ts)
+
+**Role**: Orchestrate Retrieval-Augmented Generation for question answering
+
+**Key Responsibilities**:
+- Classify query intent (factual, comparison, howto, navigation, general)
+- Retrieve relevant passages using PassageRetriever
+- Build context with temporal metadata
+- Generate natural language answers using PromptService
+- Return answer with source citations
+
+**API**:
+```typescript
+// Singleton pattern
+import { ragController } from '../lib/rag/RAGController'
+
+// Answer a question
+const result = await ragController.answerQuestion(question, {
+  topK: 5,
+  minSimilarity: 0.3,
+  maxContextLength: 3000,
+  useHybridIntent: true,
+  intentConfidenceThreshold: 0.7
+})
+
+// Returns: { answer, sources, processingTime, searchTime, generationTime }
+
+// Streaming version
+for await (const chunk of ragController.answerQuestionStreaming(question)) {
+  if (chunk.type === 'chunk') {
+    // Display incremental answer
+  } else if (chunk.type === 'complete') {
+    // Show sources and timings
+  }
+}
+```
+
+**Intent-Based Configuration**:
+```typescript
+// Different intents optimize retrieval differently
+factual:      topK=3, passages=2/page, context=3000 chars
+comparison:   topK=4, passages=2/page, context=4000 chars, diversity required
+howto:        topK=4, passages=2/page, context=3500 chars, prefer recent
+navigation:   topK=3, passages=1/page, context=2000 chars, prefer recent
+general:      topK=3, passages=2/page, context=3000 chars
+```
+
+### PassageRetriever (lib/rag/PassageRetriever.ts)
+
+**Role**: Passage-level semantic search for fine-grained retrieval
+
+**Key Features**:
+- Searches passage embeddings directly (not page-level embeddings)
+- Combines similarity score + passage quality score
+- Applies diversity constraints (max passages per page/domain)
+- Filters social media homepages (ephemeral content)
+- Returns passages with temporal metadata (visit count, dwell time, recency)
+
+**Algorithm**:
+```typescript
+async retrieve(query: string, options: RetrievalOptions): Promise<RetrievedPassage[]> {
+  // 1. Generate query embedding
+  const queryEmbedding = await embeddingService.generateEmbedding(query)
+
+  // 2. Get all pages
+  const allPages = await vectorStore.getAllPages()
+
+  // 3. Search ALL passage embeddings (not page embeddings!)
+  for (const page of allPages) {
+    for (const passage of page.passages) {
+      similarity = cosineSimilarity(queryEmbedding, passage.embedding)
+      combinedScore = similarity * (1 - qualityWeight) + quality * qualityWeight
+      candidates.push({ passage, page, similarity, combinedScore })
+    }
+  }
+
+  // 4. Sort by combined score
+  candidates.sort((a, b) => b.combinedScore - a.combinedScore)
+
+  // 5. Apply diversity constraints
+  selected = applyDiversityConstraints(
+    candidates,
+    topK,
+    maxPassagesPerPage,  // 1-2 passages per page
+    maxPagesPerDomain    // 2-3 pages per domain
+  )
+
+  // 6. Return with metadata
+  return selected.map(c => ({
+    passage: c.passage,
+    pageId, pageUrl, pageTitle,
+    similarity, combinedScore,
+    timestamp, visitCount, lastAccessed, dwellTime
+  }))
+}
+```
+
+**Homepage Filtering**:
+```typescript
+// Excludes ephemeral social media feeds
+isHomepageUrl(url: string): boolean {
+  // twitter.com, x.com, reddit.com, youtube.com, facebook.com,
+  // instagram.com, tiktok.com, linkedin.com/feed
+}
+```
+
+### IntentClassificationService (lib/rag/IntentClassificationService.ts)
+
+**Role**: Hybrid intent classification using regex + LLM fallback
+
+**Strategy**:
+```typescript
+// Fast path: Regex patterns (< 1ms)
+const regexResult = queryIntentClassifier.classifyQuery(query)
+
+if (regexResult.confidence >= 0.7) {
+  // High confidence - use regex result
+  return { ...regexResult, method: 'regex' }
+}
+
+// Slow path: LLM classification via Prompt API (~100-500ms)
+if (llmAvailable) {
+  const llmResult = await llmIntentClassifier.classifyQuery(query)
+  return { ...llmResult, method: 'llm' }
+}
+
+// Fallback: Use regex result despite low confidence
+return { ...regexResult, method: 'regex' }
+```
+
+**Statistics Tracking**:
+```typescript
+const stats = intentClassificationService.getStats()
+// Returns:
+// - regexUsed, llmUsed, llmFailed, totalQueries
+// - regexPercentage, llmPercentage, llmFailureRate
+// - llmAvailable (boolean)
+```
+
+### QueryIntentClassifier (lib/rag/QueryIntentClassifier.ts)
+
+**Role**: Fast regex-based pattern matching for intent classification
+
+**Pattern Categories**:
+```typescript
+factual: [
+  /^what\s+(is|are|was|were|does|do)/i,
+  /^who\s+(is|are|was|were|made)/i,
+  /^when\s+(did|was|were)/i,
+  /^define\s+/, /^explain\s+/, /^describe\s+/
+]
+
+comparison: [
+  /\b(compare|comparison|versus|vs\.?)\b/i,
+  /\b(difference|differ)s+between\b/i,
+  /\bwhich\s+is\s+(better|best|worse|worst)/i,
+  /\bpros?\s+and\s+cons?\b/i
+]
+
+howto: [
+  /^how\s+(to|do\s+i|can\s+i)/i,
+  /\b(tutorial|guide|walkthrough|instructions?)\b/i,
+  /\b(setup|configure|install|implement)\b/i
+]
+
+navigation: [
+  /\b(find|show\s+me)\s+(that|the)?\s*(page|site|website|article)/i,
+  /\bwhere\s+(did\s+i|can\s+i\s+find)\s+(see|read|visit)/i,
+  /\b(yesterday|last\s+week|recently|earlier).*\b(saw|read|visited)\b/i
+]
+```
+
+**Confidence Calculation**:
+```typescript
+// Sum weighted pattern matches
+for (const pattern of patterns[intent]) {
+  if (pattern.test(query)) {
+    scores[intent] += pattern.weight  // 0.6 - 1.0
+  }
+}
+
+// Find max score
+maxScore = Math.max(...Object.values(scores))
+
+// Calculate confidence (ratio + score magnitude boost)
+confidence = (maxScore / totalScore) * 0.7 + min(maxScore / 2.0, 1.0) * 0.3
+```
+
+### PromptService (lib/prompt/PromptService.ts)
+
+**Role**: Generate natural language answers using Chrome Prompt API (Gemini Nano)
+
+**Key Features**:
+- Intent-specific system prompts for optimal results
+- Streaming and non-streaming answer generation
+- Instructs LLM to cite sources as [Source N] for badge rendering
+- Temporal metadata awareness in prompts
+
+**API**:
+```typescript
+// Singleton pattern
+import { promptService } from '../lib/prompt/PromptService'
+
+// Non-streaming
+const response = await promptService.generateAnswer(question, context, {
+  intent: { type: 'factual', confidence: 0.9, keywords: [...] }
+})
+// Returns: { answer, processingTime }
+
+// Streaming
+for await (const chunk of promptService.generateAnswerStreaming(question, context, options)) {
+  console.log(chunk)  // Incremental text chunks
+}
+```
+
+**Intent-Specific Prompts**:
+```typescript
+factual: "You are a precise AI assistant...
+  - CRITICAL: When citing sources, use ONLY the format [Source N]
+  - Example: 'According to [Source 1], the answer is...'
+  - DO NOT write page titles in citations
+  - Be direct and concise"
+
+navigation: "You are a helpful AI assistant that helps users find pages...
+  - Use format [Source N] where N is the source number
+  - Use temporal metadata to identify the most likely page
+  - If they say 'recent', prioritize recently visited sources"
+
+comparison: "You are an analytical AI assistant...
+  - When citing sources, use ONLY the format [Source N]
+  - Example: 'According to [Source 1]... while [Source 2] suggests...'
+  - Present multiple viewpoints when available"
+```
+
+**Context Building**:
+```typescript
+private _buildPromptWithContext(
+  userQuestion: string,
+  context: string,  // Built by RAGController with passages + metadata
+  systemPrompt: string,
+  intent: QueryIntent
+): string {
+  return `${systemPrompt}
+
+CONTEXT FROM BROWSING HISTORY:
+${context}
+
+USER QUESTION:
+${userQuestion}
+
+ANSWER:`
 }
 ```
 
@@ -1382,6 +1761,10 @@ export const CHUNKER_CONFIG = {
 // Search
 { type: 'SEARCH_QUERY', query: string, options?: SearchOptions }
 → { results: SearchResult[], mode: SearchMode }
+
+// RAG (Question Answering)
+{ type: 'RAG_QUERY', question: string, options?: RAGOptions }
+→ { success: true, result: { answer: string, sources: SearchResult[], processingTime: number, searchTime: number, generationTime: number } }
 
 // Database
 { type: 'GET_DB_STATS' }
