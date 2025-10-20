@@ -264,7 +264,7 @@ export class ContentExtractor {
 
   
   private static async _waitForDynamicContent(options: { minChars?: number; timeoutMs?: number } = {}): Promise<void> {
-    const { minChars = 250, timeoutMs = 2500 } = options;
+    const { minChars = 250, timeoutMs = 5000 } = options; // Chrome uses 5000ms for dynamic content
 
     const currentLength = () => (document.body?.innerText || '').trim().length;
     if (currentLength() >= minChars) {

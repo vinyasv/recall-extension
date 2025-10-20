@@ -30,6 +30,9 @@ export interface SearchResult {
 
   /** Search mode that produced this result (optional) */
   searchMode?: SearchMode;
+
+  /** Confidence level of this result (high/medium/low) */
+  confidence?: 'high' | 'medium' | 'low';
 }
 
 /**

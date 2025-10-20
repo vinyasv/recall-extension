@@ -413,9 +413,9 @@ function injectStyles(): void {
     /* Clear Button */
     .rewind-clear-btn {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-weight: 400;
-      font-size: 11px;
-      color: rgba(0, 0, 0, 0.5);
+      font-weight: 300;
+      font-size: 10px;
+      color: rgba(0, 0, 0, 0.38);
       background: none;
       border: none;
       padding: 0;
@@ -427,7 +427,7 @@ function injectStyles(): void {
     }
 
     .rewind-clear-btn:hover {
-      color: rgba(0, 0, 0, 0.8);
+      color: rgba(0, 0, 0, 0.6);
     }
 
     /* Results */
@@ -441,10 +441,11 @@ function injectStyles(): void {
 
     .rewind-date-header {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-weight: 500;
-      font-size: 12px;
+      font-weight: 300;
+      font-size: 14px;
       color: #000000;
       margin-bottom: 8px;
+      line-height: 1.4;
     }
 
     .rewind-results-group {
@@ -473,9 +474,9 @@ function injectStyles(): void {
 
     .rewind-result-time {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-weight: 400;
-      font-size: 11px;
-      color: rgba(0, 0, 0, 0.5);
+      font-weight: 300;
+      font-size: 10px;
+      color: rgba(0, 0, 0, 0.38);
       width: 50px;
       flex-shrink: 0;
     }
@@ -498,7 +499,7 @@ function injectStyles(): void {
 
     .rewind-result-title {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-weight: 500;
+      font-weight: 400;
       font-size: 12px;
       color: #000000;
       overflow: hidden;
@@ -508,9 +509,9 @@ function injectStyles(): void {
 
     .rewind-result-url {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-weight: 400;
-      font-size: 11px;
-      color: rgba(0, 0, 0, 0.4);
+      font-weight: 300;
+      font-size: 10px;
+      color: rgba(0, 0, 0, 0.38);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -524,10 +525,11 @@ function injectStyles(): void {
       justify-content: center;
       text-align: center;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-weight: 400;
-      font-size: 12px;
-      color: rgba(0, 0, 0, 0.5);
+      font-weight: 300;
+      font-size: 10px;
+      color: rgba(0, 0, 0, 0.38);
       padding: 40px 20px;
+      line-height: 1.6;
     }
 
     /* Loading */

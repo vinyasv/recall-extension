@@ -20,6 +20,7 @@ export interface TabMonitorConfig {
 
 const DEFAULT_CONFIG: TabMonitorConfig = {
   excludedProtocols: ['chrome:', 'chrome-extension:', 'about:', 'edge:', 'data:', 'file:'],
+  // Only exclude system pages - let timeout handle stuck indexing
   excludedDomains: [],
 };
 
@@ -55,7 +56,7 @@ export class TabMonitor {
       this.activeTabId = activeTab.id;
     }
 
-    loggers.tabMonitor.debug('Initialized successfully - pages will be indexed on load');
+    loggers.tabMonitor.debug('Initialized successfully - pages will be indexed on load/navigation');
   }
 
   /**

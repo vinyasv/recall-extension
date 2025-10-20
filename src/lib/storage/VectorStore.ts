@@ -17,7 +17,7 @@ import { PERFORMANCE_CONFIG } from '../config/searchConfig';
 
 const DEFAULT_CONFIG: DatabaseConfig = {
   name: 'RecallVectorDB',
-  version: 4, // Increment version for visitCount support
+  version: 6, // Chrome-inspired: passage-only embeddings (no page/title/URL embeddings)
   storeName: 'pages',
 };
 
@@ -369,7 +369,8 @@ export class VectorStore {
       metadata.forEach((meta) => {
         // Estimate content size based on title length (rough approximation)
         stats.sizeBytes += meta.title.length * 2; // chars are 2 bytes
-        stats.sizeBytes += meta.embedding.length * 4; // Float32 is 4 bytes
+        // Estimate passage embeddings (avg ~5 passages x 768 dimensions x 4 bytes)
+        stats.sizeBytes += meta.passageCount * 768 * 4; // Float32 passage embeddings
         stats.sizeBytes += 300; // Estimated overhead for content and passages
       });
 
@@ -423,7 +424,7 @@ export class VectorStore {
 
   /**
    * Serialize a page record for storage
-   * Converts Float32Array to ArrayBuffer and handles passages
+   * Chrome approach: Only serialize passage embeddings
    */
   private _serializeRecord(record: PageRecord): SerializedPageRecord {
     // Serialize passages (convert Float32Array embeddings to ArrayBuffer)
@@ -438,23 +439,23 @@ export class VectorStore {
     return {
       ...record,
       passages: serializedPassages,
-      embedding: record.embedding.buffer.slice(
-        record.embedding.byteOffset,
-        record.embedding.byteOffset + record.embedding.byteLength
-      ) as ArrayBuffer,
     };
   }
 
   /**
    * Deserialize page metadata from storage
-   * Converts ArrayBuffer back to Float32Array (excludes content and passages)
+   * Chrome approach: No embeddings in metadata, only passage count
    */
   private _deserializeMetadata(serialized: SerializedPageRecord | SerializedPageMetadata): PageMetadata {
+    // Calculate passage count from serialized data
+    const passageCount = 'passages' in serialized ? serialized.passages.length : 
+                        'passageCount' in serialized ? serialized.passageCount : 0;
+    
     return {
       id: serialized.id,
       url: serialized.url,
       title: serialized.title,
-      embedding: new Float32Array(serialized.embedding),
+      passageCount,
       timestamp: serialized.timestamp,
       dwellTime: serialized.dwellTime,
       lastAccessed: serialized.lastAccessed,
@@ -464,7 +465,7 @@ export class VectorStore {
 
   /**
    * Deserialize a page record from storage
-   * Converts ArrayBuffer back to Float32Array and handles passages
+   * Chrome approach: Only deserialize passage embeddings
    */
   private _deserializeRecord(serialized: SerializedPageRecord): PageRecord {
     // Deserialize passages (convert ArrayBuffer embeddings back to Float32Array)
@@ -476,7 +477,6 @@ export class VectorStore {
     return {
       ...serialized,
       passages,
-      embedding: new Float32Array(serialized.embedding),
       visitCount: serialized.visitCount ?? 1, // Default to 1 for migration
     };
   }

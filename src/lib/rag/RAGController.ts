@@ -4,20 +4,20 @@
  */
 
 import { passageRetriever } from './PassageRetriever';
-import { intentClassificationService } from './IntentClassificationService';
 import { promptService } from '../prompt/PromptService';
 import type { SearchResult } from '../search/types';
 import type { PromptOptions } from '../prompt/PromptService';
-import type { RetrievedPassage, QueryIntent } from './types';
+import type { RetrievedPassage } from './types';
 import { loggers } from '../utils/logger';
 
 export interface RAGOptions {
   topK?: number; // Number of search results to retrieve (default: 5)
   minSimilarity?: number; // Minimum similarity threshold (default: 0.3)
-  maxContextLength?: number; // Maximum context length in chars (default: 8000)
+  maxContextLength?: number; // Maximum context length in chars (default: 4000)
+  maxPassagesPerPage?: number; // Max passages per page (default: 2)
+  maxPagesPerDomain?: number; // Max pages per domain (default: 3)
+  qualityWeight?: number; // Weight for passage quality (default: 0.3)
   promptOptions?: PromptOptions;
-  useHybridIntent?: boolean; // Use hybrid intent classification (default: true)
-  intentConfidenceThreshold?: number; // Threshold for regex confidence (default: 0.7)
 }
 
 export interface RAGResult {
@@ -35,31 +35,17 @@ export class RAGController {
   private readonly DEFAULT_OPTIONS: Required<Omit<RAGOptions, 'promptOptions'>> = {
     topK: 5,
     minSimilarity: 0.3,
-    maxContextLength: 8000,
-    useHybridIntent: true,
-    intentConfidenceThreshold: 0.7,
+    maxContextLength: 4000,
+    maxPassagesPerPage: 2,
+    maxPagesPerDomain: 3,
+    qualityWeight: 0.3,
   };
-
-  private isInitialized: boolean = false;
 
   /**
    * Initialize the RAG controller
    */
   async initialize(): Promise<void> {
-    if (this.isInitialized) {
-      return;
-    }
-
-    loggers.ragController.debug('Initializing RAG controller with hybrid intent classification...');
-
-    try {
-      await intentClassificationService.initialize();
-      this.isInitialized = true;
-      loggers.ragController.debug('RAG controller initialized');
-    } catch (error) {
-      loggers.ragController.error('Failed to initialize RAG controller:', error);
-      // Continue anyway - hybrid intent will fall back to regex-only
-    }
+    loggers.ragController.debug('RAG controller initialized (no intent classification)');
   }
 
   /**
@@ -72,40 +58,16 @@ export class RAGController {
     const startTime = Date.now();
     const opts = { ...this.DEFAULT_OPTIONS, ...options };
 
-    // Ensure initialized
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
-
     loggers.ragController.debug('Answering question:', question);
 
-    // Step 1: Classify query intent using hybrid approach
-    const intentResult = opts.useHybridIntent
-      ? await intentClassificationService.classify(question, {
-          confidenceThreshold: opts.intentConfidenceThreshold,
-        })
-      : await intentClassificationService.classify(question, { forceRegex: true });
-
-    const intent: QueryIntent = {
-      type: intentResult.type,
-      confidence: intentResult.confidence,
-      keywords: intentResult.keywords,
-    };
-
-    const intentConfig = intentClassificationService.getIntentConfig(intent.type);
-
-    loggers.ragController.debug(
-      `Query intent: ${intent.type} (confidence: ${intent.confidence.toFixed(2)}, method: ${intentResult.method}, latency: ${intentResult.latency}ms)`
-    );
-
-    // Step 2: Retrieve relevant passages using intent-aware configuration
+    // Step 1: Retrieve relevant passages
     const searchStartTime = Date.now();
     const passages = await passageRetriever.retrieve(question, {
-      topK: intentConfig.topK,
+      topK: opts.topK,
       minSimilarity: opts.minSimilarity,
-      maxPassagesPerPage: intentConfig.maxPassagesPerPage,
-      maxPagesPerDomain: intentConfig.diversityRequired ? 2 : 3,
-      qualityWeight: 0.3,
+      maxPassagesPerPage: opts.maxPassagesPerPage,
+      maxPagesPerDomain: opts.maxPagesPerDomain,
+      qualityWeight: opts.qualityWeight,
     });
 
     const searchTime = Date.now() - searchStartTime;
@@ -124,19 +86,16 @@ export class RAGController {
       };
     }
 
-    // Step 3: Build context from passages
-    const context = this._buildContextFromPassages(passages, intentConfig.maxContextLength, intent);
+    // Step 2: Build context from passages
+    const context = this._buildContextFromPassages(passages, opts.maxContextLength);
 
     loggers.ragController.debug(`Built context with ${context.length} characters`);
 
-    // Step 4: Generate answer using Prompt API with intent
+    // Step 3: Generate answer using Prompt API
     const generationStartTime = Date.now();
 
     try {
-      const response = await promptService.generateAnswer(question, context, {
-        ...opts.promptOptions,
-        intent,
-      });
+      const response = await promptService.generateAnswer(question, context, opts.promptOptions);
       const generationTime = Date.now() - generationStartTime;
       const totalTime = Date.now() - startTime;
 
@@ -190,36 +149,16 @@ export class RAGController {
     const startTime = Date.now();
     const opts = { ...this.DEFAULT_OPTIONS, ...options };
 
-    // Ensure initialized
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
-
     loggers.ragController.debug('Answering question (streaming):', question);
 
-    // Step 1: Classify query intent using hybrid approach
-    const intentResult = opts.useHybridIntent
-      ? await intentClassificationService.classify(question, {
-          confidenceThreshold: opts.intentConfidenceThreshold,
-        })
-      : await intentClassificationService.classify(question, { forceRegex: true });
-
-    const intent: QueryIntent = {
-      type: intentResult.type,
-      confidence: intentResult.confidence,
-      keywords: intentResult.keywords,
-    };
-
-    const intentConfig = intentClassificationService.getIntentConfig(intent.type);
-
-    // Step 2: Retrieve relevant passages
+    // Step 1: Retrieve relevant passages
     const searchStartTime = Date.now();
     const passages = await passageRetriever.retrieve(question, {
-      topK: intentConfig.topK,
+      topK: opts.topK,
       minSimilarity: opts.minSimilarity,
-      maxPassagesPerPage: intentConfig.maxPassagesPerPage,
-      maxPagesPerDomain: intentConfig.diversityRequired ? 2 : 3,
-      qualityWeight: 0.3,
+      maxPassagesPerPage: opts.maxPassagesPerPage,
+      maxPagesPerDomain: opts.maxPagesPerDomain,
+      qualityWeight: opts.qualityWeight,
     });
 
     const searchTime = Date.now() - searchStartTime;
@@ -237,15 +176,12 @@ export class RAGController {
       return;
     }
 
-    // Step 3: Build context
-    const context = this._buildContextFromPassages(passages, intentConfig.maxContextLength, intent);
+    // Step 2: Build context
+    const context = this._buildContextFromPassages(passages, opts.maxContextLength);
 
-    // Step 4: Stream answer generation
+    // Step 3: Stream answer generation
     const generationStartTime = Date.now();
-    const stream = promptService.generateAnswerStreaming(question, context, {
-      ...opts.promptOptions,
-      intent,
-    });
+    const stream = promptService.generateAnswerStreaming(question, context, opts.promptOptions);
 
     for await (const chunk of stream) {
       yield { type: 'chunk', content: chunk };
@@ -288,8 +224,7 @@ export class RAGController {
    */
   private _buildContextFromPassages(
     passages: RetrievedPassage[],
-    maxLength: number,
-    _intent: QueryIntent
+    maxLength: number
   ): string {
     let context = '';
     let currentLength = 0;
@@ -365,6 +300,8 @@ export class RAGController {
         content: '', // We don't need full content
         summary: '', // We don't need summary
         passages: [], // Passages already used in context
+        titleEmbedding: new Float32Array(), // Not needed for RAG context
+        urlEmbedding: new Float32Array(), // Not needed for RAG context
         embedding: new Float32Array(), // Not needed
         timestamp: Date.now(),
         dwellTime: 0,

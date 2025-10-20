@@ -1,12 +1,11 @@
 /**
  * IndexingPipeline - Orchestrates the full indexing workflow
- * Stages: Content Extraction → Summarization → Embedding → Storage
+ * Stages: Content Extraction → Passage Embeddings → Page Embedding → Storage
  */
 
 import type { QueuedPage } from './IndexingQueue';
 import type { ExtractedContent } from '../content/ContentExtractor';
-import { embeddingService } from '../lib/embeddings/EmbeddingService';
-import { summarizerService } from '../lib/summarizer/SummarizerService';
+import { embeddingGemmaService } from '../lib/embeddings/EmbeddingGemmaService';
 import { vectorStore } from '../lib/storage/VectorStore';
 import { loggers } from '../lib/utils/logger';
 
@@ -29,12 +28,13 @@ export class IndexingPipeline {
   async initialize(): Promise<void> {
     loggers.indexingPipeline.debug('Initializing...');
 
-    // Initialize services
-    await embeddingService.initialize();
-    await summarizerService.initialize();
+    // Initialize services (no summarizer needed - we use passages directly)
+    await embeddingGemmaService.initialize();
     await vectorStore.initialize();
 
+    const modelInfo = embeddingGemmaService.getModelInfo();
     loggers.indexingPipeline.debug('Initialized');
+    loggers.indexingPipeline.info('Using EmbeddingGemma:', modelInfo.dimensions + 'd, ' + modelInfo.parameters + ' params');
   }
 
   /**
@@ -62,37 +62,30 @@ export class IndexingPipeline {
 
       // Validate passages
       if (!content.passages || content.passages.length === 0) {
+        console.warn('[IndexingPipeline] ❌ No passages extracted from content!');
+        console.warn('[IndexingPipeline] Content length:', content.textLength, 'chars');
+        console.warn('[IndexingPipeline] Title:', content.title?.substring(0, 100));
+        console.warn('[IndexingPipeline] Content preview:', content.content?.substring(0, 200));
         return { success: false, error: 'No passages extracted from content' };
       }
 
-      loggers.indexingPipeline.debug('✅ Content extracted:', content.textLength, 'chars, title:', content.title?.substring(0, 50));
-      loggers.indexingPipeline.debug('Passages extracted:', content.passages.length, 'passages');
+      console.log('[IndexingPipeline] ✅ Content extracted:', content.textLength, 'chars');
+      console.log('[IndexingPipeline] ✅ Passages extracted:', content.passages.length);
+      console.log('[IndexingPipeline] Sample passage:', content.passages[0]?.text?.substring(0, 100));
 
-      // Stage 2: Generate embeddings for passages (PRIMARY SEARCH)
-      loggers.indexingPipeline.debug('Stage 2: Generating passage embeddings...');
+      // Stage 2: Generate embeddings for passages (PASSAGE-ONLY APPROACH)
+      console.log('[IndexingPipeline] Stage 2: Generating', content.passages.length, 'passage embeddings...');
       const passagesWithEmbeddings = await this._generatePassageEmbeddings(content.passages);
-      loggers.indexingPipeline.debug('✅ Passage embeddings generated for', passagesWithEmbeddings.length, 'passages');
+      console.log('[IndexingPipeline] ✅ Embedded', passagesWithEmbeddings.length, 'passages');
+      console.log('[IndexingPipeline] Embedding dimension:', passagesWithEmbeddings[0]?.embedding?.length);
 
-      // Stage 3: Generate page-level embedding from title + best passages
-      // (Used as fallback for page-level search, passages are primary)
-      loggers.indexingPipeline.debug('Stage 3: Generating page-level embedding...');
-      const pageEmbedding = await this._generatePageLevelEmbedding(content.title, passagesWithEmbeddings);
-      loggers.indexingPipeline.debug('✅ Page embedding generated:', pageEmbedding.length, 'dimensions');
-
-      // Stage 4: Generate summary for display (optional, graceful fallback)
-      loggers.indexingPipeline.debug('Stage 4: Generating display summary...');
-      const summary = await this._generateDisplaySummary(content.content, passagesWithEmbeddings, content.url, content.title);
-      loggers.indexingPipeline.debug('✅ Summary generated:', summary.length, 'chars');
-
-      // Stage 5: Store in database
-      loggers.indexingPipeline.debug('Stage 5: Storing in database...');
+      // Stage 3: Store in database (no title/URL/page embeddings needed)
+      console.log('[IndexingPipeline] Stage 3: Storing in database...');
       const pageId = await this._storePage({
         url: queuedPage.url,
         title: content.title,
         content: content.content,
-        summary,
         passages: passagesWithEmbeddings,
-        embedding: pageEmbedding,
         timestamp: queuedPage.startTime,
         dwellTime: queuedPage.dwellTime,
       });
@@ -248,83 +241,12 @@ export class IndexingPipeline {
   }
 
   /**
-   * Generate page-level embedding from title and best passages
-   * (No summary needed - passages already contain semantic information)
-   */
-  private async _generatePageLevelEmbedding(title: string, passages: any[]): Promise<Float32Array> {
-    // Sort passages by quality and take the best ones
-    const topPassages = passages
-      .filter(p => p.quality > 0.3) // Filter out low-quality passages
-      .sort((a, b) => b.quality - a.quality)
-      .slice(0, 5); // Take top 5 passages for page-level embedding
-
-    const passageTexts = topPassages.map(p => p.text).join(' ');
-
-    // Combine title and top passages
-    const parts = [];
-    if (title) parts.push(title);
-    if (passageTexts) parts.push(passageTexts);
-
-    const pageEmbeddingText = parts.join('. ');
-
-    return await this._generateEmbedding(pageEmbeddingText);
-  }
-
-  /**
-   * Generate display summary using Chrome Summarizer API (optional with graceful fallback)
-   * Uses Chrome AI when available, falls back to best passages for display
-   */
-  private async _generateDisplaySummary(
-    content: string,
-    passages: any[],
-    url: string,
-    title: string
-  ): Promise<string> {
-    try {
-      loggers.indexingPipeline.debug('🤖 Attempting Chrome AI summarization for display...');
-
-      const summary = await summarizerService.summarizeForSearch(content, url, title, 300);
-
-      if (summary && summary.length > 0) {
-        loggers.indexingPipeline.debug('✅ Chrome AI summary successful:', summary.length, 'chars');
-        return summary;
-      }
-    } catch (error) {
-      loggers.indexingPipeline.debug('Chrome Summarizer API unavailable, using passage fallback:', error);
-    }
-
-    // Fallback: Use best passages for display summary
-    loggers.indexingPipeline.debug('📄 Using passage-based fallback for summary');
-    return this._createSummaryFromPassages(passages);
-  }
-
-  /**
-   * Create display summary from best passages (fallback when Summarizer API unavailable)
-   */
-  private _createSummaryFromPassages(passages: any[]): string {
-    const topPassages = passages
-      .filter(p => p.quality > 0.4) // Higher quality threshold for display
-      .sort((a, b) => b.quality - a.quality)
-      .slice(0, 2); // Top 2 passages
-
-    if (topPassages.length === 0) {
-      // Last resort: use first passage
-      return passages[0]?.text?.substring(0, 300) || '';
-    }
-
-    const summary = topPassages
-      .map(p => p.text)
-      .join(' ')
-      .substring(0, 300); // Limit to 300 chars for display
-
-    return summary.trim();
-  }
-
-  /**
    * Generate embedding from text
+   * Uses 'document' task type for proper EmbeddingGemma prefixing
    */
   private async _generateEmbedding(text: string): Promise<Float32Array> {
-    return await embeddingService.generateEmbedding(text);
+    // Use 'document' task type for indexing (applies "title: none | text:" prefix)
+    return await embeddingGemmaService.generateEmbedding(text, 'document');
   }
 
   /**
@@ -350,9 +272,7 @@ export class IndexingPipeline {
     url: string;
     title: string;
     content: string;
-    summary: string;
     passages: any[];
-    embedding: Float32Array;
     timestamp: number;
     dwellTime: number;
   }): Promise<string> {
@@ -366,9 +286,7 @@ export class IndexingPipeline {
       await vectorStore.updatePage(existing.id, {
         title: data.title,
         content: data.content,
-        summary: data.summary,
         passages: data.passages,
-        embedding: data.embedding,
         timestamp: data.timestamp,
         dwellTime: data.dwellTime,
         visitCount: existing.visitCount + 1, // Increment visit count
@@ -382,9 +300,7 @@ export class IndexingPipeline {
         url: data.url,
         title: data.title,
         content: data.content,
-        summary: data.summary,
         passages: data.passages,
-        embedding: data.embedding,
         timestamp: data.timestamp,
         dwellTime: data.dwellTime,
         lastAccessed: 0,

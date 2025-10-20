@@ -5,15 +5,6 @@
 import type { Passage } from '../storage/types';
 
 /**
- * Query intent classification result
- */
-export interface QueryIntent {
-  type: 'factual' | 'comparison' | 'howto' | 'navigation' | 'general';
-  confidence: number;
-  keywords: string[];
-}
-
-/**
  * Passage with retrieval metadata
  */
 export interface RetrievedPassage {
@@ -47,16 +38,4 @@ export interface ContextOptions {
   maxLength?: number;
   includeQualityIndicators?: boolean;
   includeCitationInstructions?: boolean;
-}
-
-/**
- * Intent-specific retrieval configuration
- */
-export interface IntentConfig {
-  topK: number;
-  minQuality: number;
-  diversityRequired: boolean;
-  preferRecent: boolean;
-  maxPassagesPerPage: number; // Maximum passages to include per page
-  maxContextLength: number; // Maximum context length in characters
 }

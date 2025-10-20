@@ -3,33 +3,12 @@
  * Searches passages directly instead of pages for better granularity
  */
 
-import { embeddingService } from '../embeddings/EmbeddingService';
+import { embeddingGemmaService } from '../embeddings/EmbeddingGemmaService';
+import { dotProduct } from '../search/VectorSearch';
 import { vectorStore } from '../storage/VectorStore';
 import type { RetrievedPassage, RetrievalOptions } from './types';
 import type { PageRecord, Passage } from '../storage/types';
 import { loggers } from '../utils/logger';
-
-/**
- * Calculate cosine similarity between two vectors
- */
-function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  if (a.length !== b.length) {
-    throw new Error('Vectors must have same length');
-  }
-
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-
-  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-  return denominator === 0 ? 0 : dotProduct / denominator;
-}
 
 /**
  * PassageRetriever class
@@ -52,8 +31,8 @@ export class PassageRetriever {
 
       loggers.ragController.debug('Retrieving passages with options:', opts);
 
-      // Step 1: Generate query embedding
-      const queryEmbedding = await embeddingService.generateEmbedding(query);
+      // Step 1: Generate query embedding (use 'query' task type for RAG)
+      const queryEmbedding = await embeddingGemmaService.generateEmbedding(query, 'query');
 
       // Step 2: Get all pages from database
       const allPages = await vectorStore.getAllPages();
@@ -89,8 +68,8 @@ export class PassageRetriever {
             continue;
           }
 
-          // Calculate similarity
-          const similarity = cosineSimilarity(queryEmbedding, passage.embedding);
+          // Calculate similarity using dot product (for normalized embeddings)
+          const similarity = dotProduct(queryEmbedding, passage.embedding);
 
           // Filter by minimum similarity
           if (similarity < opts.minSimilarity) {

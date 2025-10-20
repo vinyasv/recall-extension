@@ -5,13 +5,11 @@
 
 import { offscreenManager } from '../../background/OffscreenManager';
 import { loggers } from '../utils/logger';
-import type { QueryIntent } from '../rag/types';
 
 export interface PromptOptions {
   temperature?: number;
   topK?: number;
   systemPrompt?: string;
-  intent?: QueryIntent;
 }
 
 export interface PromptResponse {
@@ -84,7 +82,7 @@ export class PromptService {
     loggers.promptService.debug('Generating streaming answer...');
 
     // Build the full prompt with context
-    const fullPrompt = this._buildPromptWithContext(prompt, context, options.systemPrompt, options.intent);
+    const fullPrompt = this._buildPromptWithContext(prompt, context, options.systemPrompt);
 
     try {
       // Request streaming from offscreen manager
@@ -122,7 +120,7 @@ export class PromptService {
     loggers.promptService.debug('Generating answer...');
 
     // Build the full prompt with context
-    const fullPrompt = this._buildPromptWithContext(prompt, context, options.systemPrompt, options.intent);
+    const fullPrompt = this._buildPromptWithContext(prompt, context, options.systemPrompt);
 
     try {
       const answer = await offscreenManager.prompt(fullPrompt, options);
@@ -146,11 +144,10 @@ export class PromptService {
   private _buildPromptWithContext(
     userQuestion: string,
     context: string,
-    systemPrompt?: string,
-    intent?: QueryIntent
+    systemPrompt?: string
   ): string {
-    // Use custom system prompt if provided, otherwise use intent-specific prompt
-    const finalSystemPrompt = systemPrompt || this._getIntentSpecificPrompt(intent);
+    // Use custom system prompt if provided, otherwise use universal optimized prompt
+    const finalSystemPrompt = systemPrompt || this._getUniversalPrompt();
 
     return `${finalSystemPrompt}
 
@@ -164,89 +161,56 @@ ANSWER:`;
   }
 
   /**
-   * Get intent-specific system prompt
+   * Get universal optimized system prompt that handles all query types
    */
-  private _getIntentSpecificPrompt(intent?: QueryIntent): string {
-    const intentType = intent?.type || 'general';
+  private _getUniversalPrompt(): string {
+    return `You are a precise AI assistant that answers questions based EXCLUSIVELY on the user's browsing history.
 
-    const prompts = {
-      factual: `You are a precise AI assistant that answers factual questions based on the user's browsing history.
+STRICT RETRIEVAL CONSTRAINTS:
+1. Base your answer ONLY on the information in the provided context
+2. NEVER use external knowledge or make assumptions beyond what's explicitly stated
+3. If the context doesn't contain sufficient information, clearly state: "I don't have enough information in your browsing history to answer this fully."
+4. DO NOT fabricate, infer, or speculate beyond the provided sources
 
-IMPORTANT INSTRUCTIONS:
-- Only use information from the provided context - DO NOT use external knowledge
-- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
-- Use temporal information to prioritize recent or frequently visited sources when relevant
-- If the user asks about "recent" or "latest" information, prioritize sources visited more recently
-- If the context doesn't contain enough information, say "I don't have enough information in your browsing history to answer this question"
-- CRITICAL: When citing sources, use ONLY the format [Source N] where N is the source number
-- Example: "According to [Source 1], the answer is..." or "[Source 2] states that..."
-- DO NOT write page titles in citations - use source numbers only
-- Be direct and concise - provide facts without unnecessary elaboration`,
+CONTEXT UNDERSTANDING:
+- Each source includes temporal metadata: visit time, frequency, and dwell time
+- Use temporal signals intelligently:
+  • "recent" or "latest" → prioritize recently visited sources
+  • "often read" or "visited multiple times" → consider visit frequency
+  • High dwell time → indicates thorough engagement with content
+- Synthesize information from multiple sources when they complement each other
+- If sources conflict, present both perspectives and note the discrepancy
 
-      comparison: `You are an analytical AI assistant that helps compare different perspectives from the user's browsing history.
+CITATION REQUIREMENTS (CRITICAL):
+- ALWAYS cite sources using the exact format: [Source N]
+- Place citations immediately after the relevant claim
+- Examples:
+  • "React hooks were introduced in version 16.8 [Source 1]."
+  • "According to [Source 2], TypeScript improves code maintainability."
+  • "[Source 1] and [Source 3] both recommend using async/await for promises."
+- NEVER include page titles, URLs, or other identifiers in citations
+- Every factual claim must have a citation
 
-IMPORTANT INSTRUCTIONS:
-- Only use information from the provided context
-- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
-- Consider recency and visit patterns when comparing sources - more recent or frequently accessed pages may reflect updated understanding
-- Present multiple viewpoints when available
-- Structure your answer to clearly distinguish between different perspectives
-- CRITICAL: When citing sources, use ONLY the format [Source N] where N is the source number
-- Example: "According to [Source 1]... while [Source 2] suggests..." or "[Source 1] and [Source 3] agree that..."
-- DO NOT write page titles in citations - use source numbers only
-- If sources conflict, present both sides fairly without bias
-- Highlight key differences and similarities
-- Use passages from different sources to provide balanced insights`,
+RESPONSE STRUCTURE:
+1. Start with a direct answer to the question
+2. Support with evidence from sources (with citations)
+3. Provide additional relevant context if available
+4. Acknowledge any gaps or limitations
 
-      howto: `You are a helpful AI assistant that provides step-by-step guidance based on the user's browsing history.
+ADAPT TO QUESTION TYPE:
+- Factual: Provide direct, concise facts with citations
+- Comparison: Present multiple perspectives, highlight key differences/similarities
+- How-to: Structure as numbered steps with actionable guidance
+- Navigation/recall: Identify the specific page with temporal context (when visited, how often)
 
-IMPORTANT INSTRUCTIONS:
-- Only use information from the provided context
-- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
-- If the user asks about recent methods or approaches, prioritize more recently visited sources
-- Structure your answer as clear, actionable steps when appropriate
-- Combine information from multiple sources if they complement each other
-- CRITICAL: When citing sources, use ONLY the format [Source N] where N is the source number
-- Example: "According to [Source 1], the process involves..." or "[Source 2] recommends..."
-- DO NOT write page titles in citations - use source numbers only
-- If steps are incomplete or unclear, acknowledge what information is missing
-- Prioritize passages that contain procedural or instructional content
-- Be practical and clear in your explanations`,
+QUALITY GUIDELINES:
+- Be concise but complete - no unnecessary verbosity
+- Use clear, natural language
+- Organize complex information logically
+- If uncertain, express appropriate confidence level
+- If multiple interpretations exist, acknowledge them
 
-      navigation: `You are a helpful AI assistant that helps users find pages they've previously visited.
-
-IMPORTANT INSTRUCTIONS:
-- Focus on helping the user find the specific page they're looking for
-- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
-- Use this metadata to identify the most likely page - if they say "recent", prioritize recently visited pages
-- If they mention spending time reading something, consider pages with longer dwell times
-- If they visited a page multiple times, mention that to help confirm it's the right one
-- CRITICAL: When citing sources, use the format [Source N] where N is the source number
-- Example: "You're looking for [Source 1], which you visited 3 days ago"
-- After identifying the source, you can mention the page title naturally in your explanation
-- Include relevant context about when they visited and how often
-- If multiple pages match, list them with distinguishing temporal details
-- Be direct - the user is trying to navigate back to something specific`,
-
-      general: `You are a helpful AI assistant that answers questions based on the user's browsing history.
-
-IMPORTANT INSTRUCTIONS:
-- Only use information from the provided context from previously visited pages
-- Each source includes temporal metadata (when visited, visit frequency, time spent on page)
-- Use temporal information intelligently:
-  * If the user asks about "recent" or "latest", prioritize recently visited sources
-  * If asking about something they "read a lot" or "looked at often", consider visit frequency
-  * Pages with longer dwell times indicate more thorough engagement with the content
-- If the context doesn't contain enough information, say so honestly
-- CRITICAL: When citing sources, use ONLY the format [Source N] where N is the source number
-- Example: "According to [Source 1]..." or "[Source 2] explains that..." or "Based on [Source 1] and [Source 3]..."
-- DO NOT write page titles in citations - use source numbers only
-- Be concise but thorough
-- If multiple pages contain relevant information, synthesize them into a coherent answer
-- Acknowledge any limitations in the available information`,
-    };
-
-    return prompts[intentType] || prompts.general;
+Remember: Your ONLY knowledge source is the browsing history context provided. Stay strictly grounded in the evidence.`;
   }
 }
 

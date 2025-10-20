@@ -34,6 +34,7 @@ export interface Passage {
 
 /**
  * Lightweight page metadata for fast search operations
+ * Chrome approach: No page-level embeddings, metadata only
  */
 export interface PageMetadata {
   /** Unique identifier (UUID v4) */
@@ -45,8 +46,8 @@ export interface PageMetadata {
   /** Page title */
   title: string;
 
-  /** Page-level embedding (title + top passages, used for Phase 1 filtering) */
-  embedding: Float32Array;
+  /** Number of passages for this page */
+  passageCount: number;
 
   /** Visit timestamp (ms since epoch) */
   timestamp: number;
@@ -63,6 +64,7 @@ export interface PageMetadata {
 
 /**
  * Represents a page record in the database
+ * Chrome approach: Title as passage #0, only passage embeddings stored
  */
 export interface PageRecord {
   /** Unique identifier (UUID v4) */
@@ -77,14 +79,12 @@ export interface PageRecord {
   /** Raw extracted text content */
   content: string;
 
-  /** Display summary (AI-generated when available, otherwise top passages) */
-  summary: string;
-
-  /** Array of semantic passages from the page (PRIMARY SEARCH SOURCE) */
+  /** 
+   * Array of semantic passages from the page
+   * Passage #0 is ALWAYS the title (Chrome approach)
+   * Remaining passages are content chunks
+   */
   passages: Passage[];
-
-  /** Page-level embedding (title + top passages, used as fallback) */
-  embedding: Float32Array;
 
   /** Visit timestamp (ms since epoch) */
   timestamp: number;
@@ -157,13 +157,13 @@ export interface SerializedPassage {
 
 /**
  * Serialized page metadata for IndexedDB storage
- * (Float32Array needs to be stored as ArrayBuffer)
+ * Chrome approach: No embeddings in metadata
  */
 export interface SerializedPageMetadata {
   id: string;
   url: string;
   title: string;
-  embedding: ArrayBuffer;
+  passageCount: number;
   timestamp: number;
   dwellTime: number;
   lastAccessed: number;
@@ -172,16 +172,14 @@ export interface SerializedPageMetadata {
 
 /**
  * Serialized page record for IndexedDB storage
- * (Float32Array needs to be stored as ArrayBuffer)
+ * Chrome approach: Only passage embeddings (title as passage #0)
  */
 export interface SerializedPageRecord {
   id: string;
   url: string;
   title: string;
   content: string;
-  summary: string;
-  passages: SerializedPassage[];
-  embedding: ArrayBuffer;
+  passages: SerializedPassage[]; // Passage #0 is title
   timestamp: number;
   dwellTime: number;
   lastAccessed: number;
