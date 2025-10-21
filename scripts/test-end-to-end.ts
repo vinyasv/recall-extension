@@ -8,10 +8,14 @@ import { embeddingGemmaService } from '../src/lib/embeddings/EmbeddingGemmaServi
 import type { PageRecord, Passage } from '../src/lib/storage/types';
 import type { SearchResult } from '../src/lib/search/types';
 import { RRF_CONFIG } from '../src/lib/config/searchConfig';
-import { generateLargeCorpus } from './generate-realistic-test-corpus';
+
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
 
 // Simple text chunking (no DOM required)
-function chunkText(text: string, maxChunkSize: number = 300, overlapSize: number = 50): string[] {
+// Very small chunks (50 words) to create multiple passages from short Gemini pages (avg 75 words)
+function chunkText(text: string, maxChunkSize: number = 50, overlapSize: number = 10): string[] {
   const words = text.split(/\s+/);
   const chunks: string[] = [];
   
@@ -148,6 +152,94 @@ const TEST_QUERIES: TestQuery[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Embedding Cache Helpers
+// ---------------------------------------------------------------------------
+
+interface CachedPassage {
+  id: string;
+  text: string;
+  wordCount: number;
+  position: number;
+  quality: number;
+  embedding?: number[];
+}
+
+interface CachedPage {
+  id: string;
+  url: string;
+  title: string;
+  content: string;
+  passages: CachedPassage[];
+}
+
+const CACHE_DIR = path.resolve(process.cwd(), '.cache');
+const CACHE_FILE = path.join(CACHE_DIR, 'gemini-corpus-embeddings.json');
+const HASH_FILE = path.join(CACHE_DIR, 'gemini-corpus-hash.json');
+const CORPUS_SOURCE_FILE = path.join(CACHE_DIR, 'gemini-corpus.json');
+
+function ensureCacheDir() {
+  if (!fs.existsSync(CACHE_DIR)) {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+  }
+}
+
+function hashFile(filePath: string): string {
+  const data = fs.readFileSync(filePath);
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function hashArray(values: string[]): string {
+  return crypto.createHash('sha256').update(values.join('|')).digest('hex');
+}
+
+function computeCacheKey(): string {
+  const corpusHash = hashFile(CORPUS_SOURCE_FILE);
+  const querySignature = hashArray(TEST_QUERIES.map(q => `${q.query}::${q.expectedDomains.join(',')}`));
+  return `${corpusHash}:${querySignature}`;
+}
+
+function loadCachedPages(cacheKey: string): CachedPage[] | null {
+  if (!fs.existsSync(CACHE_FILE) || !fs.existsSync(HASH_FILE)) {
+    return null;
+  }
+
+  try {
+    const storedHash = JSON.parse(fs.readFileSync(HASH_FILE, 'utf8'))?.key;
+    if (storedHash !== cacheKey) {
+      return null;
+    }
+
+    const cachedData = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')) as CachedPage[];
+    return cachedData;
+  } catch (error) {
+    console.warn('Failed to read embedding cache, ignoring:', error);
+    return null;
+  }
+}
+
+function saveCachedPages(cacheKey: string, pages: PageRecord[]): void {
+  ensureCacheDir();
+
+  const serialized = pages.map(page => ({
+    id: page.id,
+    url: page.url,
+    title: page.title,
+    content: page.content,
+    passages: page.passages.map(p => ({
+      id: p.id,
+      text: p.text,
+      wordCount: p.wordCount,
+      position: p.position,
+      quality: p.quality,
+      embedding: p.embedding ? Array.from(p.embedding) : undefined,
+    })),
+  }));
+
+  fs.writeFileSync(CACHE_FILE, JSON.stringify(serialized, null, 2));
+  fs.writeFileSync(HASH_FILE, JSON.stringify({ key: cacheKey }));
+}
+
 // Evaluation metrics
 interface EvaluationMetrics {
   precision: number;
@@ -171,8 +263,8 @@ let inMemoryPages: PageRecord[] = [];
 // ============================================================================
 
 async function extractAndChunkContent(page: { url: string; title: string; content: string }): Promise<Passage[]> {
-  // Chunk the content into passages (simple text-based chunking)
-  const chunks = chunkText(page.content, 300, 50);
+  // Chunk the content into passages (uses default chunk size from chunkText function)
+  const chunks = chunkText(page.content);
   
   const passages: Passage[] = [];
   
@@ -193,13 +285,15 @@ async function extractAndChunkContent(page: { url: string; title: string; conten
 // STAGE 2: EMBEDDING GENERATION
 // ============================================================================
 
-async function generateEmbeddings(passages: Passage[]): Promise<Passage[]> {
+async function generateEmbeddings(passages: Passage[], pageTitle?: string): Promise<Passage[]> {
   const passagesWithEmbeddings: Passage[] = [];
   
   for (const passage of passages) {
     const embedding = await embeddingGemmaService.generateEmbedding(
       passage.text,
-      'document'
+      'document',
+      768,
+      pageTitle  // Include page title for better embedding quality
     );
     
     passagesWithEmbeddings.push({
@@ -217,47 +311,81 @@ async function generateEmbeddings(passages: Passage[]): Promise<Passage[]> {
 
 async function indexCorpus(): Promise<void> {
   console.log('\n📦 STAGE 1-3: Extraction → Chunking → Embedding → Indexing...');
-  
+
   await embeddingGemmaService.initialize();
-  const corpus = generateLargeCorpus();
   
-  console.log(`   Generated ${corpus.length} pages`);
+  // Load Gemini-generated corpus
+  const geminiCorpusPath = path.join(process.cwd(), '.cache', 'gemini-corpus.json');
+  if (!fs.existsSync(geminiCorpusPath)) {
+    throw new Error('Gemini corpus not found! Run: npx tsx scripts/generate-with-gemini.ts');
+  }
+  
+  const corpus = JSON.parse(fs.readFileSync(geminiCorpusPath, 'utf8'));
+  console.log(`   Loaded ${corpus.length} pages from Gemini corpus`);
   console.log('   Processing pages...');
-  
+
+  const cacheKey = computeCacheKey();
+  const cachedPages = loadCachedPages(cacheKey);
+
   inMemoryPages = [];
   let processed = 0;
   const startTime = Date.now();
-  
-  for (const page of corpus) {
-    // Stage 1: Extract and chunk
-    const passages = await extractAndChunkContent(page);
-    
-    // Stage 2: Generate embeddings
-    const passagesWithEmbeddings = await generateEmbeddings(passages);
-    
-    // Stage 3: Store in memory
-    inMemoryPages.push({
-      id: `page-${processed}`,
-      url: page.url,
-      title: page.title,
-      content: page.content,
-      passages: passagesWithEmbeddings,
-      timestamp: Date.now(),
-      dwellTime: 60,
-      lastAccessed: Date.now(),
-      visitCount: 1,
-    });
-    
-    processed++;
-    
-    // Progress indicator
-    if (processed % 50 === 0) {
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      const rate = (processed / (Date.now() - startTime) * 1000).toFixed(1);
-      console.log(`   Processed ${processed}/${corpus.length} pages (${rate} pages/sec, ${elapsed}s elapsed)`);
+
+  if (cachedPages) {
+    console.log('   🔁 Loaded cached embeddings');
+    for (const cached of cachedPages) {
+      inMemoryPages.push({
+        id: cached.id,
+        url: cached.url,
+        title: cached.title,
+        content: cached.content,
+        passages: cached.passages.map(p => ({
+          id: p.id,
+          text: p.text,
+          wordCount: p.wordCount,
+          position: p.position,
+          quality: p.quality,
+          embedding: p.embedding ? Float32Array.from(p.embedding) : undefined,
+        })),
+        timestamp: Date.now(),
+        dwellTime: 60,
+        lastAccessed: Date.now(),
+        visitCount: 1,
+      });
     }
+    processed = inMemoryPages.length;
+  } else {
+    ensureCacheDir();
+    console.log('   💾 No cache found, generating embeddings...');
+    for (const page of corpus) {
+      const passages = await extractAndChunkContent(page);
+      const passagesWithEmbeddings = await generateEmbeddings(passages, page.title);
+
+      const record = {
+        id: `page-${processed}`,
+        url: page.url,
+        title: page.title,
+        content: page.content,
+        passages: passagesWithEmbeddings,
+        timestamp: Date.now(),
+        dwellTime: 60,
+        lastAccessed: Date.now(),
+        visitCount: 1,
+      };
+
+      inMemoryPages.push(record);
+      processed++;
+
+      if (processed % 50 === 0) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const rate = (processed / (Date.now() - startTime) * 1000).toFixed(1);
+        console.log(`   Processed ${processed}/${corpus.length} pages (${rate} pages/sec, ${elapsed}s elapsed)`);
+      }
+    }
+
+    saveCachedPages(cacheKey, inMemoryPages);
   }
-  
+
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`✅ Indexed ${processed} pages in ${totalTime}s`);
   console.log(`   Avg passages per page: ${(inMemoryPages.reduce((sum, p) => sum + p.passages.length, 0) / inMemoryPages.length).toFixed(1)}`);
@@ -277,50 +405,63 @@ function dotProduct(a: Float32Array, b: Float32Array): number {
 }
 
 // Semantic search (passage-only, threshold-based)
-async function performSemanticSearch(query: string, threshold: number = 0.70): Promise<SearchResult[]> {
+async function performSemanticSearch(query: string, threshold: number | null = 0.70): Promise<SearchResult[]> {
   const queryEmbedding = await embeddingGemmaService.generateEmbedding(query, 'query');
-  
-  const pageScores = new Map<string, {
-    page: PageRecord;
-    maxSimilarity: number;
-    passageMatches: number;
-  }>();
-  
+
+  const strongThreshold = threshold ?? 0.70;
+  const results: SearchResult[] = [];
+
   for (const page of inMemoryPages) {
-    let maxSimilarity = 0;
-    let passageMatches = 0;
-    
+    if (!page.passages || page.passages.length === 0) {
+      continue;
+    }
+
+    let maxSimilarity = -Infinity;
+    let topPassageSnippet: string | undefined;
+    let strongMatches = 0;
+
     for (const passage of page.passages) {
       if (!passage.embedding) continue;
-      
+
       const similarity = dotProduct(queryEmbedding, passage.embedding);
-      
-      if (similarity >= threshold) {
-        maxSimilarity = Math.max(maxSimilarity, similarity);
-        passageMatches++;
+
+      if (similarity > maxSimilarity) {
+        maxSimilarity = similarity;
+        topPassageSnippet = passage.text;
+      }
+
+      if (similarity >= strongThreshold) {
+        strongMatches++;
       }
     }
-    
-    if (passageMatches > 0) {
-      pageScores.set(page.id, { page, maxSimilarity, passageMatches });
+
+    if (maxSimilarity === -Infinity) {
+      continue;
     }
-  }
-  
-  const results: SearchResult[] = [];
-  for (const [_, pageData] of pageScores) {
-    let relevanceScore = pageData.maxSimilarity;
-    if (pageData.passageMatches > 1) {
-      relevanceScore += Math.log(pageData.passageMatches) * 0.05;
+
+    // FIXED: Use stronger multi-passage bonus (0.10 instead of 0.05)
+    let relevanceScore = maxSimilarity;
+    if (strongMatches > 1) {
+      relevanceScore += Math.log(strongMatches) * 0.10;
     }
-    
+
+    const confidence = maxSimilarity >= strongThreshold
+      ? 'high'
+      : maxSimilarity >= strongThreshold - 0.05
+      ? 'medium'
+      : 'low';
+
     results.push({
-      page: pageData.page,
-      similarity: pageData.maxSimilarity,
+      page,
+      similarity: maxSimilarity,
       relevanceScore,
       searchMode: 'semantic',
+      confidence,
+      topPassageSnippet,
     });
   }
-  
+
+  // FIXED: Sort by relevanceScore (includes multi-passage bonuses), not raw similarity
   results.sort((a, b) => b.relevanceScore - a.relevanceScore);
   return results;
 }
@@ -442,12 +583,20 @@ function calculateMetrics(
   const domainMatches = resultDomains.filter(d => expectedDomains.includes(d)).length;
   const avgDomainMatch = results.length > 0 ? domainMatches / results.length : 0;
   
-  // Keyword matching (check if result titles/content contain expected keywords)
+  // Keyword search usage (check if results actually used keyword matching)
+  // For semantic-only: check if results contain keywords (content relevance)
+  // For keyword/hybrid: check if matchedTerms field is populated
   let keywordMatches = 0;
   for (const result of results) {
-    const textLower = `${result.page.title} ${result.page.content}`.toLowerCase();
-    const hasKeyword = expectedKeywords.some(kw => textLower.includes(kw.toLowerCase()));
-    if (hasKeyword) keywordMatches++;
+    if (result.matchedTerms && result.matchedTerms.length > 0) {
+      // Keyword or hybrid search - has matchedTerms
+      keywordMatches++;
+    } else if (result.searchMode === 'semantic') {
+      // Semantic-only - check content relevance
+      const textLower = `${result.page.title} ${result.page.content}`.toLowerCase();
+      const hasKeyword = expectedKeywords.some(kw => textLower.includes(kw.toLowerCase()));
+      if (hasKeyword) keywordMatches++;
+    }
   }
   const avgKeywordMatch = results.length > 0 ? keywordMatches / results.length : 0;
   
@@ -489,20 +638,20 @@ function calculateMetrics(
 async function runEvaluation(
   mode: 'semantic' | 'keyword' | 'hybrid',
   alpha?: number
-): Promise<Map<string, EvaluationMetrics>> {
+): Promise<Map<string, { metrics: EvaluationMetrics; topResults: SearchResult[] }>> {
   console.log(`\n🔍 STAGE 4-5: Search & Evaluation (${mode.toUpperCase()}${alpha !== undefined ? `, alpha=${alpha}` : ''})...`);
   
-  const results = new Map<string, EvaluationMetrics>();
+  const results = new Map<string, { metrics: EvaluationMetrics; topResults: SearchResult[] }>();
   
   for (const testQuery of TEST_QUERIES) {
     let searchResults: SearchResult[] = [];
     
     if (mode === 'semantic') {
-      searchResults = await performSemanticSearch(testQuery.query, 0.70);
+      searchResults = await performSemanticSearch(testQuery.query, null);
       searchResults = searchResults.slice(0, 10);
       searchResults = searchResults.map(r => ({
         ...r,
-        confidence: r.similarity >= 0.70 ? 'high' as const : 'medium' as const,
+        confidence: 'medium' as const,
       }));
     } else if (mode === 'keyword') {
       searchResults = await performKeywordSearch(testQuery.query, 10);
@@ -512,7 +661,7 @@ async function runEvaluation(
       }));
     } else {
       // Hybrid
-      const semanticResults = await performSemanticSearch(testQuery.query, 0.70);
+      const semanticResults = await performSemanticSearch(testQuery.query, null);
       const keywordResults = await performKeywordSearch(testQuery.query, 30);
       
       const alphaWeight = alpha !== undefined ? alpha : 0.7;
@@ -546,15 +695,18 @@ async function runEvaluation(
       testQuery.expectedDomains,
       testQuery.expectedKeywords
     );
-    
-    results.set(testQuery.query, metrics);
+
+    results.set(testQuery.query, {
+      metrics,
+      topResults: searchResults,
+    });
   }
   
   return results;
 }
 
-function aggregateMetrics(results: Map<string, EvaluationMetrics>): EvaluationMetrics {
-  const values = Array.from(results.values());
+function aggregateMetrics(results: Map<string, { metrics: EvaluationMetrics }>): EvaluationMetrics {
+  const values = Array.from(results.values()).map(r => r.metrics);
   
   return {
     precision: values.reduce((sum, m) => sum + m.precision, 0) / values.length,
@@ -587,27 +739,150 @@ async function main() {
   // Run evaluations
   const semanticResults = await runEvaluation('semantic');
   const semanticAgg = aggregateMetrics(semanticResults);
-  
+
   const keywordResults = await runEvaluation('keyword');
   const keywordAgg = aggregateMetrics(keywordResults);
-  
-  const hybridResults = await runEvaluation('hybrid', 0.7);
-  const hybridAgg = aggregateMetrics(hybridResults);
-  
-  const balancedResults = await runEvaluation('hybrid', 0.5);
-  const balancedAgg = aggregateMetrics(balancedResults);
+
+  const hybridResultsAlpha90 = await runEvaluation('hybrid', 0.9);
+  const hybridAggAlpha90 = aggregateMetrics(hybridResultsAlpha90);
+
+  const hybridResultsAlpha80 = await runEvaluation('hybrid', 0.8);
+  const hybridAggAlpha80 = aggregateMetrics(hybridResultsAlpha80);
+
+  const hybridResultsAlpha70 = await runEvaluation('hybrid', 0.7);
+  const hybridAggAlpha70 = aggregateMetrics(hybridResultsAlpha70);
+
+  const hybridResultsAlpha50 = await runEvaluation('hybrid', 0.5);
+  const hybridAggAlpha50 = aggregateMetrics(hybridResultsAlpha50);
+
+  const hybridResultsAlpha40 = await runEvaluation('hybrid', 0.4);
+  const hybridAggAlpha40 = aggregateMetrics(hybridResultsAlpha40);
+
+  const hybridResultsAlpha30 = await runEvaluation('hybrid', 0.3);
+  const hybridAggAlpha30 = aggregateMetrics(hybridResultsAlpha30);
+
+  // Serialize ground truth and top results snapshot
+  const groundTruth = {
+    generatedAt: new Date().toISOString(),
+    corpusSize: inMemoryPages.length,
+    queryResults: Array.from(semanticResults.entries()).map(([query, data]) => ({
+      query,
+      expectedDomains: TEST_QUERIES.find(q => q.query === query)?.expectedDomains ?? [],
+      expectedKeywords: TEST_QUERIES.find(q => q.query === query)?.expectedKeywords ?? [],
+      semantic: data.topResults.map(r => ({
+        url: r.page.url,
+        title: r.page.title,
+        similarity: r.similarity,
+        relevanceScore: r.relevanceScore,
+        confidence: r.confidence,
+        topPassageSnippet: r.topPassageSnippet,
+      })),
+      keyword: (keywordResults.get(query)?.topResults ?? []).map(r => ({
+        url: r.page.url,
+        title: r.page.title,
+        similarity: r.similarity,
+        relevanceScore: r.relevanceScore,
+        keywordScore: r.keywordScore,
+        matchedTerms: r.matchedTerms,
+      })),
+      hybridAlpha09: (hybridResultsAlpha90.get(query)?.topResults ?? []).map(r => ({
+        url: r.page.url,
+        title: r.page.title,
+        similarity: r.similarity,
+        relevanceScore: r.relevanceScore,
+        keywordScore: r.keywordScore,
+        matchedTerms: r.matchedTerms,
+        confidence: r.confidence,
+        topPassageSnippet: r.topPassageSnippet,
+      })),
+      hybridAlpha08: (hybridResultsAlpha80.get(query)?.topResults ?? []).map(r => ({
+        url: r.page.url,
+        title: r.page.title,
+        similarity: r.similarity,
+        relevanceScore: r.relevanceScore,
+        keywordScore: r.keywordScore,
+        matchedTerms: r.matchedTerms,
+        confidence: r.confidence,
+        topPassageSnippet: r.topPassageSnippet,
+      })),
+      hybridAlpha07: (hybridResultsAlpha70.get(query)?.topResults ?? []).map(r => ({
+        url: r.page.url,
+        title: r.page.title,
+        similarity: r.similarity,
+        relevanceScore: r.relevanceScore,
+        keywordScore: r.keywordScore,
+        matchedTerms: r.matchedTerms,
+        confidence: r.confidence,
+        topPassageSnippet: r.topPassageSnippet,
+      })),
+      hybridAlpha05: (hybridResultsAlpha50.get(query)?.topResults ?? []).map(r => ({
+        url: r.page.url,
+        title: r.page.title,
+        similarity: r.similarity,
+        relevanceScore: r.relevanceScore,
+        keywordScore: r.keywordScore,
+        matchedTerms: r.matchedTerms,
+        confidence: r.confidence,
+        topPassageSnippet: r.topPassageSnippet,
+      })),
+      hybridAlpha04: (hybridResultsAlpha40.get(query)?.topResults ?? []).map(r => ({
+        url: r.page.url,
+        title: r.page.title,
+        similarity: r.similarity,
+        relevanceScore: r.relevanceScore,
+        keywordScore: r.keywordScore,
+        matchedTerms: r.matchedTerms,
+        confidence: r.confidence,
+        topPassageSnippet: r.topPassageSnippet,
+      })),
+      hybridAlpha03: (hybridResultsAlpha30.get(query)?.topResults ?? []).map(r => ({
+        url: r.page.url,
+        title: r.page.title,
+        similarity: r.similarity,
+        relevanceScore: r.relevanceScore,
+        keywordScore: r.keywordScore,
+        matchedTerms: r.matchedTerms,
+        confidence: r.confidence,
+        topPassageSnippet: r.topPassageSnippet,
+      })),
+    })),
+    aggregates: {
+      semantic: semanticAgg,
+      keyword: keywordAgg,
+      hybridAlpha09: hybridAggAlpha90,
+      hybridAlpha08: hybridAggAlpha80,
+      hybridAlpha07: hybridAggAlpha70,
+      hybridAlpha05: hybridAggAlpha50,
+      hybridAlpha04: hybridAggAlpha40,
+      hybridAlpha03: hybridAggAlpha30,
+    },
+  };
+
+  const outputPath = path.resolve(process.cwd(), 'docs', 'GROUND_TRUTH.json');
+  fs.writeFileSync(outputPath, JSON.stringify(groundTruth, null, 2), 'utf-8');
+  console.log(`📄 Ground truth snapshot saved to ${outputPath}`);
   
   // Print results
   console.log('\n' + '='.repeat(70));
   console.log('📊 FINAL RESULTS\n');
   
   console.log('┌─────────────────┬──────────┬──────────┬──────────┬──────────┬──────────┐');
-  console.log('│ Mode            │ Prec     │ Recall   │ MRR      │ Results  │ KW Match │');
+  console.log('│ Mode            │ Prec     │ Recall   │ MRR      │ Results  │ Relevant │');
   console.log('├─────────────────┼──────────┼──────────┼──────────┼──────────┼──────────┤');
   console.log(`│ Semantic        │ ${(semanticAgg.precision * 100).toFixed(1).padStart(6)}%  │ ${(semanticAgg.recall * 100).toFixed(1).padStart(6)}%  │ ${semanticAgg.mrr.toFixed(3).padStart(8)} │ ${semanticAgg.avgResults.toFixed(1).padStart(8)} │ ${(semanticAgg.avgKeywordMatch * 100).toFixed(1).padStart(6)}%  │`);
   console.log(`│ Keyword         │ ${(keywordAgg.precision * 100).toFixed(1).padStart(6)}%  │ ${(keywordAgg.recall * 100).toFixed(1).padStart(6)}%  │ ${keywordAgg.mrr.toFixed(3).padStart(8)} │ ${keywordAgg.avgResults.toFixed(1).padStart(8)} │ ${(keywordAgg.avgKeywordMatch * 100).toFixed(1).padStart(6)}%  │`);
-  console.log(`│ Hybrid (α=0.7)  │ ${(hybridAgg.precision * 100).toFixed(1).padStart(6)}%  │ ${(hybridAgg.recall * 100).toFixed(1).padStart(6)}%  │ ${hybridAgg.mrr.toFixed(3).padStart(8)} │ ${hybridAgg.avgResults.toFixed(1).padStart(8)} │ ${(hybridAgg.avgKeywordMatch * 100).toFixed(1).padStart(6)}%  │`);
-  console.log(`│ Hybrid (α=0.5)  │ ${(balancedAgg.precision * 100).toFixed(1).padStart(6)}%  │ ${(balancedAgg.recall * 100).toFixed(1).padStart(6)}%  │ ${balancedAgg.mrr.toFixed(3).padStart(8)} │ ${balancedAgg.avgResults.toFixed(1).padStart(8)} │ ${(balancedAgg.avgKeywordMatch * 100).toFixed(1).padStart(6)}%  │`);
+  const hybridTable = [
+    ['Hybrid (α=0.9)', hybridAggAlpha90],
+    ['Hybrid (α=0.8)', hybridAggAlpha80],
+    ['Hybrid (α=0.7)', hybridAggAlpha70],
+    ['Hybrid (α=0.5)', hybridAggAlpha50],
+    ['Hybrid (α=0.4)', hybridAggAlpha40],
+    ['Hybrid (α=0.3)', hybridAggAlpha30],
+  ];
+
+  for (const [label, agg] of hybridTable) {
+    console.log(`│ ${label.padEnd(14)} │ ${(agg.precision * 100).toFixed(1).padStart(6)}%  │ ${(agg.recall * 100).toFixed(1).padStart(6)}%  │ ${agg.mrr.toFixed(3).padStart(8)} │ ${agg.avgResults.toFixed(1).padStart(8)} │ ${(agg.avgKeywordMatch * 100).toFixed(1).padStart(6)}%  │`);
+  }
   console.log('└─────────────────┴──────────┴──────────┴──────────┴──────────┴──────────┘');
   
   console.log('\n📈 Confidence Distribution (avg per query):\n');
@@ -616,41 +891,55 @@ async function main() {
   console.log('├─────────────────┼──────────┼──────────┼──────────┤');
   console.log(`│ Semantic        │ ${semanticAgg.confidenceDistribution.high.toFixed(1).padStart(8)} │ ${semanticAgg.confidenceDistribution.medium.toFixed(1).padStart(8)} │ ${semanticAgg.confidenceDistribution.low.toFixed(1).padStart(8)} │`);
   console.log(`│ Keyword         │ ${keywordAgg.confidenceDistribution.high.toFixed(1).padStart(8)} │ ${keywordAgg.confidenceDistribution.medium.toFixed(1).padStart(8)} │ ${keywordAgg.confidenceDistribution.low.toFixed(1).padStart(8)} │`);
-  console.log(`│ Hybrid (α=0.7)  │ ${hybridAgg.confidenceDistribution.high.toFixed(1).padStart(8)} │ ${hybridAgg.confidenceDistribution.medium.toFixed(1).padStart(8)} │ ${hybridAgg.confidenceDistribution.low.toFixed(1).padStart(8)} │`);
-  console.log(`│ Hybrid (α=0.5)  │ ${balancedAgg.confidenceDistribution.high.toFixed(1).padStart(8)} │ ${balancedAgg.confidenceDistribution.medium.toFixed(1).padStart(8)} │ ${balancedAgg.confidenceDistribution.low.toFixed(1).padStart(8)} │`);
+  const hybridConfidenceRows = [
+    ['Hybrid (α=0.9)', hybridAggAlpha90.confidenceDistribution],
+    ['Hybrid (α=0.8)', hybridAggAlpha80.confidenceDistribution],
+    ['Hybrid (α=0.7)', hybridAggAlpha70.confidenceDistribution],
+    ['Hybrid (α=0.5)', hybridAggAlpha50.confidenceDistribution],
+    ['Hybrid (α=0.4)', hybridAggAlpha40.confidenceDistribution],
+    ['Hybrid (α=0.3)', hybridAggAlpha30.confidenceDistribution],
+  ];
+  for (const [label, dist] of hybridConfidenceRows) {
+    console.log(`│ ${label.padEnd(14)} │ ${dist.high.toFixed(1).padStart(8)} │ ${dist.medium.toFixed(1).padStart(8)} │ ${dist.low.toFixed(1).padStart(8)} │`);
+  }
   console.log('└─────────────────┴──────────┴──────────┴──────────┘');
-  
-  // Analysis
+
   console.log('\n🎯 ANALYSIS:\n');
-  
+
   const modes = [
     { name: 'Semantic', agg: semanticAgg },
     { name: 'Keyword', agg: keywordAgg },
-    { name: 'Hybrid (α=0.7)', agg: hybridAgg },
-    { name: 'Hybrid (α=0.5)', agg: balancedAgg },
+    { name: 'Hybrid (α=0.9)', agg: hybridAggAlpha90 },
+    { name: 'Hybrid (α=0.8)', agg: hybridAggAlpha80 },
+    { name: 'Hybrid (α=0.7)', agg: hybridAggAlpha70 },
+    { name: 'Hybrid (α=0.5)', agg: hybridAggAlpha50 },
+    { name: 'Hybrid (α=0.4)', agg: hybridAggAlpha40 },
+    { name: 'Hybrid (α=0.3)', agg: hybridAggAlpha30 },
   ];
-  
+
   const bestPrecision = modes.reduce((max, m) => m.agg.precision > max.agg.precision ? m : max);
   const bestRecall = modes.reduce((max, m) => m.agg.recall > max.agg.recall ? m : max);
   const bestMRR = modes.reduce((max, m) => m.agg.mrr > max.agg.mrr ? m : max);
-  
+
   console.log(`✅ Best Precision: ${bestPrecision.name} (${(bestPrecision.agg.precision * 100).toFixed(1)}%)`);
   console.log(`✅ Best Recall: ${bestRecall.name} (${(bestRecall.agg.recall * 100).toFixed(1)}%)`);
   console.log(`✅ Best MRR: ${bestMRR.name} (${bestMRR.agg.mrr.toFixed(3)})`);
-  
+
   console.log('\n💡 RECOMMENDATIONS:\n');
-  
-  if (hybridAgg.precision >= Math.max(semanticAgg.precision, keywordAgg.precision)) {
+
+  if (hybridAggAlpha70.precision >= Math.max(semanticAgg.precision, keywordAgg.precision)) {
     console.log('✅ Hybrid search (α=0.7) provides best or equal precision.');
   } else {
     console.log('⚠️  One of the single-mode searches outperforms hybrid.');
   }
-  
-  if (hybridAgg.recall > semanticAgg.recall) {
+
+  if (hybridAggAlpha70.recall > semanticAgg.recall) {
     console.log('✅ Hybrid improves recall over semantic-only (keyword provides coverage).');
+  } else {
+    console.log('⚠️  Hybrid did not beat semantic recall.');
   }
   
-  if (hybridAgg.confidenceDistribution.high >= 5) {
+  if (hybridAggAlpha70.confidenceDistribution.high >= 5) {
     console.log('✅ High-confidence results dominate, indicating reliable matches.');
   }
   

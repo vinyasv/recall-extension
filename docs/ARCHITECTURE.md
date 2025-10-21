@@ -22,10 +22,10 @@
 ### Key Features
 
 - **RAG-Powered Q&A**: Natural language question answering over browsing history using Chrome Prompt API (Gemini Nano)
-- **Intelligent Hybrid Search**: Weighted RRF fusion (70% semantic, 30% keyword) with confidence scoring
+- **Intelligent Hybrid Search**: Weighted RRF fusion (~90% semantic, 10% keyword) with confidence scoring
 - **Passage-Only Architecture**: Simplified embeddings (passages only, no title/URL/page-level embeddings)
-- **High-Precision Semantic Search**: 0.70 similarity threshold for reliable results (100% precision validated)
-- **State-of-the-Art Embeddings**: Google's EmbeddingGemma (308M params, 768 dimensions) with task-specific prefixes
+- **Balanced Semantic Search**: 0.58 similarity threshold tuned for realistic recall/precision trade-offs
+- **Embeddings**: Google's EmbeddingGemma (308M params, 768 dimensions) with task-specific prefixes
 - **On-Device ML**: 768-dimensional embeddings via Transformers.js + WASM/WebGPU
 - **Zero Server Communication**: Complete privacy - no data leaves your device
 - **Smart Indexing**: Chrome-inspired DocumentChunker with 200-word passages and quality scoring
@@ -40,7 +40,7 @@
 - **RAG System**: Chrome Prompt API (Gemini Nano) with universal optimized prompt
 - **Storage**: IndexedDB (via VectorStore abstraction)
 - **Search**: Custom hybrid engine (semantic + TF-IDF + RRF) with dot product similarity
-- **Similarity Metric**: Dot product (optimal for normalized vectors)
+- **Similarity Metric**: Dot product (EmbeddingGemma outputs unit-normalized vectors)
 
 ---
 
@@ -956,8 +956,8 @@ const embeddings: Float32Array[] = await embeddingGemmaService.generateEmbedding
 **Performance**:
 ```typescript
 // First call: ~50ms (model loading)
-// Cached call: ~0.01ms (2000x faster!)
-// Cache hit rate: >90% in production
+// Subsequent call: ~2-5ms (depends on WASM backend)
+// Cache hit rate: >80% in corpus-scale testing
 
 // LRU cache (max 2000 entries)
 cacheKey = `${prefixedText}:${dimensions}`

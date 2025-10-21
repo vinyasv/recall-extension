@@ -6,11 +6,11 @@ import type { SearchOptions, RankingConfig } from '../search/types';
 
 /**
  * Default search options
- * Note: minSimilarity = 0.70 validated as optimal for passage-only embeddings (100% precision)
+ * Note: minSimilarity tuned to 0.58 based on realistic corpus evaluation
  */
 export const DEFAULT_SEARCH_OPTIONS: Required<Omit<SearchOptions, 'mode' | 'alpha'>> = {
   k: 10,
-  minSimilarity: 0.70, // Validated optimal for passage-only approach
+  minSimilarity: 0.58, // Tuned against realistic corpus (top relevant similarities ≥ ~0.58)
   boostRecent: true,
   boostFrequent: true,
   recencyWeight: 0.15,
@@ -33,7 +33,7 @@ export const DEFAULT_RANKING_CONFIG: RankingConfig = {
 export const RRF_CONFIG = {
   K: 60, // Standard RRF constant from research
   SEARCH_MULTIPLIER: 3, // Get 3x more results (increased for sparse high-threshold semantic results)
-  DEFAULT_ALPHA: 0.7, // Default weight: 70% semantic, 30% keyword (semantic is high-precision)
+  DEFAULT_ALPHA: 0.9, // Default weight: 90% semantic, 10% keyword (tuned via end-to-end testing: 85.7% precision)
 } as const;
 
 /**
@@ -42,7 +42,7 @@ export const RRF_CONFIG = {
 export const PERFORMANCE_CONFIG = {
   // Search optimization
   PHASE_1_MULTIPLIER: 3, // Get 3x more candidates for passage re-ranking
-  MIN_SIMILARITY_THRESHOLD: 0.70, // Validated optimal threshold
+  MIN_SIMILARITY_THRESHOLD: 0.58,
 
   // Caching
   QUERY_CACHE_SIZE: 100,

@@ -70,12 +70,12 @@ function weightedReciprocalRankFusion(
 
 /**
  * Calculate confidence level for a search result
- * - high: Strong semantic match (>= 0.70) or both semantic + keyword agree
+ * - high: Strong semantic match (>= 0.68) or both semantic + keyword agree
  * - medium: Decent keyword score but weak/no semantic
  * - low: Weak match overall
  */
 function calculateConfidence(similarity: number, keywordScore?: number): 'high' | 'medium' | 'low' {
-  const hasStrongSemantic = similarity >= 0.70;
+  const hasStrongSemantic = similarity >= 0.68;
   const hasKeyword = (keywordScore || 0) > 0;
   const hasStrongKeyword = (keywordScore || 0) > 0.5;
 
@@ -83,11 +83,11 @@ function calculateConfidence(similarity: number, keywordScore?: number): 'high' 
     return 'high'; // Both agree - highest confidence
   } else if (hasStrongSemantic) {
     return 'high'; // Strong semantic alone is trusted
-  } else if (hasStrongKeyword) {
-    return 'medium'; // Keyword fallback - decent confidence
-  } else {
-    return 'low'; // Weak match overall
+  } else if (similarity >= 0.58 || hasStrongKeyword) {
+    return 'medium'; // Mid-band semantic or strong keyword fallback
   }
+
+  return 'low'; // Weak match overall
 }
 
 /**
@@ -127,7 +127,7 @@ export class HybridSearch {
       return results.map(r => ({
         ...r,
         searchMode: 'semantic' as SearchMode,
-        confidence: r.similarity >= 0.70 ? 'high' as const : 'medium' as const,
+        confidence: calculateConfidence(r.similarity),
       }));
     }
 
@@ -151,7 +151,7 @@ export class HybridSearch {
     // Hybrid mode: Run both searches in parallel and combine with weighted RRF
     loggers.hybridSearch.debug('Running hybrid search (semantic + keyword + weighted RRF)');
 
-    // Get alpha parameter (default: 0.7 = 70% semantic, 30% keyword)
+    // Get alpha parameter (default: 0.9 = 90% semantic, 10% keyword)
     const alpha = options.alpha !== undefined ? options.alpha : RRF_CONFIG.DEFAULT_ALPHA;
     loggers.hybridSearch.debug('Using alpha:', alpha, '(semantic weight)');
 

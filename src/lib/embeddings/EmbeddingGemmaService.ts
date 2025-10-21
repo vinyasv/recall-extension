@@ -84,17 +84,19 @@ export class EmbeddingGemmaService {
    * 
    * IMPORTANT: Use correct task type for best results:
    * - 'query': Search queries (applies "task: search result | query:" prefix)
-   * - 'document': Documents being indexed (applies "title: none | text:" prefix)
+   * - 'document': Documents being indexed (applies "title: {title} | text:" prefix)
    * 
    * @param text The text to embed
    * @param taskType Task type: 'query' for search, 'document' for indexing
    * @param dimensions Target dimensions (768 recommended, supports 512, 256, 128 via Matryoshka)
+   * @param documentTitle Optional document title (for 'document' taskType only) - improves retrieval quality
    * @returns Normalized Float32Array embedding (use dot product for similarity)
    */
   async generateEmbedding(
     text: string,
     taskType: 'query' | 'document' = 'query',
-    dimensions: 128 | 256 | 512 | 768 = 768
+    dimensions: 128 | 256 | 512 | 768 = 768,
+    documentTitle?: string
   ): Promise<Float32Array> {
     // Ensure model is initialized
     if (!this.extractor) {
@@ -106,9 +108,14 @@ export class EmbeddingGemmaService {
     }
 
     // Add required task prefix for EmbeddingGemma (critical for quality)
-    const prefixedText = taskType === 'query'
-      ? `task: search result | query: ${text}`
-      : `title: none | text: ${text}`;
+    let prefixedText: string;
+    if (taskType === 'query') {
+      prefixedText = `task: search result | query: ${text}`;
+    } else {
+      // For documents: include title if available (official docs: "providing a title will improve model performance")
+      const titlePart = documentTitle ? documentTitle : 'none';
+      prefixedText = `title: ${titlePart} | text: ${text}`;
+    }
 
     // Create cache key including dimensions and task type
     const cacheKey = `${prefixedText}:${dimensions}`;

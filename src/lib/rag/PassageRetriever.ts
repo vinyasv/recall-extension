@@ -16,7 +16,7 @@ import { loggers } from '../utils/logger';
 export class PassageRetriever {
   private readonly DEFAULT_OPTIONS: Required<RetrievalOptions> = {
     topK: 10,
-    minSimilarity: 0.3,
+    minSimilarity: 0.58,
     maxPassagesPerPage: 3,
     maxPagesPerDomain: 2,
     qualityWeight: 0.3,
@@ -53,11 +53,6 @@ export class PassageRetriever {
       }> = [];
 
       for (const page of allPages) {
-        // Skip social media homepages (ephemeral content with low retrieval value)
-        if (this.isHomepageUrl(page.url)) {
-          continue;
-        }
-
         if (!page.passages || page.passages.length === 0) {
           continue;
         }
@@ -190,25 +185,6 @@ export class PassageRetriever {
     }
   }
 
-  /**
-   * Check if URL is a social media homepage
-   * These pages have ephemeral feeds that change on every visit
-   * They should be excluded from RAG to avoid noise
-   */
-  private isHomepageUrl(url: string): boolean {
-    const homepagePatterns = [
-      /^https?:\/\/(www\.)?twitter\.com\/?$/,
-      /^https?:\/\/(www\.)?x\.com\/?$/,
-      /^https?:\/\/(www\.)?reddit\.com\/?$/,
-      /^https?:\/\/(www\.)?youtube\.com\/?$/,
-      /^https?:\/\/(www\.)?facebook\.com\/?$/,
-      /^https?:\/\/(www\.)?instagram\.com\/?$/,
-      /^https?:\/\/(www\.)?tiktok\.com\/?$/,
-      /^https?:\/\/(www\.)?linkedin\.com\/feed/,
-    ];
-
-    return homepagePatterns.some((pattern) => pattern.test(url));
-  }
 
   /**
    * Group passages by source page

@@ -8,7 +8,9 @@ import { loggers } from '../lib/utils/logger';
 loggers.sidebar.debug('Initializing sidebar module...');
 
 let sidebarOpen = false;
+let activeSearchQuery: string | null = null;
 let sidebarContainer: HTMLElement | null = null;
+let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Create and inject the sidebar overlay
@@ -949,11 +951,19 @@ function setupEventListeners(): void {
     }
 
     if (!query) {
+      activeSearchQuery = null;
       loadAllHistory();
       return;
     }
 
     searchTimeout = setTimeout(() => {
+      activeSearchQuery = query;
+
+      if (refreshTimeout) {
+        clearTimeout(refreshTimeout);
+        refreshTimeout = null;
+      }
+
       performSearch(query);
     }, 300);
   });
@@ -1017,7 +1027,11 @@ export function openSidebar(): void {
   sidebarOpen = true;
   
   // Load initial data
-  loadAllHistory();
+  if (activeSearchQuery) {
+    performSearch(activeSearchQuery);
+  } else {
+    loadAllHistory();
+  }
 }
 
 /**
@@ -1031,7 +1045,6 @@ export function closeSidebar(): void {
 /**
  * Handle PAGE_INDEXED message for real-time updates
  */
-let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
 function handlePageIndexed(pageInfo: { id: string; url: string; title: string; timestamp: number; isUpdate: boolean }): void {
   console.log('[Rewind Sidebar] Page indexed:', pageInfo.title, pageInfo.isUpdate ? '(updated)' : '(new)');
 
@@ -1042,8 +1055,7 @@ function handlePageIndexed(pageInfo: { id: string; url: string; title: string; t
   }
 
   // Check if user is actively searching
-  const searchInput = sidebarContainer?.querySelector('#rewindSearchInput') as HTMLInputElement;
-  if (searchInput && searchInput.value.trim()) {
+  if (activeSearchQuery) {
     console.log('[Rewind Sidebar] Active search in progress, skipping refresh to preserve results');
     return;
   }
@@ -1074,6 +1086,10 @@ export function toggleSidebar(): void {
  * Load all history
  */
 async function loadAllHistory(): Promise<void> {
+  if (activeSearchQuery) {
+    return;
+  }
+
   const resultsContainer = sidebarContainer?.querySelector('#rewindResultsContainer');
   if (!resultsContainer) return;
 
@@ -1087,7 +1103,7 @@ async function loadAllHistory(): Promise<void> {
     const response = await chrome.runtime.sendMessage({ type: 'GET_ALL_PAGES' });
     
     if (response && response.success && response.pages) {
-      renderResults(response.pages);
+      renderResults(response.pages, false);
     } else {
       showEmptyState();
     }
@@ -1117,12 +1133,14 @@ async function performSearch(query: string): Promise<void> {
     });
     
     if (response && response.success && response.results) {
-      renderResults(response.results);
+      renderResults(response.results, true);
     } else {
+      activeSearchQuery = null;
       showEmptyState();
     }
   } catch (error) {
     console.error('[Rewind Sidebar] Error searching:', error);
+    activeSearchQuery = null;
     showEmptyState();
   }
 }
@@ -1130,7 +1148,7 @@ async function performSearch(query: string): Promise<void> {
 /**
  * Render results
  */
-function renderResults(pages: any[]): void {
+function renderResults(pages: any[], isSearch: boolean = true): void {
   const resultsContainer = sidebarContainer?.querySelector('#rewindResultsContainer');
   if (!resultsContainer) return;
 
@@ -1139,8 +1157,16 @@ function renderResults(pages: any[]): void {
     return;
   }
 
-  // Group by date
-  const grouped = groupByDate(pages);
+  const pagesToDisplay = isSearch
+    ? [...pages].sort((a, b) => {
+        const simA = typeof a.similarity === 'number' ? a.similarity : -Infinity;
+        const simB = typeof b.similarity === 'number' ? b.similarity : -Infinity;
+        if (simB !== simA) return simB - simA;
+        return (b.timestamp || 0) - (a.timestamp || 0);
+      })
+    : [...pages].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+  const grouped = groupPagesByDate(pagesToDisplay);
   
   let html = '';
   for (const [date, items] of Object.entries(grouped)) {
@@ -1219,13 +1245,10 @@ async function clearHistory(): Promise<void> {
 }
 
 // Helper functions
-function groupByDate(pages: any[]): Record<string, any[]> {
-  // Sort pages by timestamp descending (most recent first)
-  const sortedPages = [...pages].sort((a, b) => b.timestamp - a.timestamp);
-
+function groupPagesByDate(pages: any[]): Record<string, any[]> {
   const grouped: Record<string, any[]> = {};
 
-  sortedPages.forEach(page => {
+  pages.forEach(page => {
     const date = formatDate(page.timestamp);
     if (!grouped[date]) {
       grouped[date] = [];

@@ -316,7 +316,7 @@ async function runSearchMetricsTest() {
           const searchResults = await hybridSearch.search(query, {
             mode,
             k,
-            minSimilarity: 0.5 // Use the new threshold
+            minSimilarity: 0.58,
           });
 
           const endTime = performance.now();
@@ -394,9 +394,9 @@ async function runSearchMetricsTest() {
 
   // Enhanced quality analysis based on similarity scores
   const validSimilarities = allSimilarities.filter(s => s > 0); // Exclude zero similarities from keyword results
-  const highQualityResults = validSimilarities.filter(s => s >= 0.8).length;
-  const mediumQualityResults = validSimilarities.filter(s => s >= 0.5 && s < 0.8).length;
-  const lowQualityResults = validSimilarities.filter(s => s < 0.5).length;
+  const highQualityResults = validSimilarities.filter(s => s >= 0.68).length;
+  const mediumQualityResults = validSimilarities.filter(s => s >= 0.58 && s < 0.68).length;
+  const lowQualityResults = validSimilarities.filter(s => s < 0.58).length;
 
   // Calculate similarity distribution statistics
   const maxSimilarity = validSimilarities.length > 0 ? Math.max(...validSimilarities) : 0;
@@ -406,7 +406,7 @@ async function runSearchMetricsTest() {
     : 0;
 
   // Check if threshold is being respected (only for semantic results)
-  const thresholdRespected = validSimilarities.every(s => s >= 0.5);
+  const thresholdRespected = validSimilarities.every(s => s >= 0.58);
 
   const summary = {
     totalTests,
@@ -418,7 +418,7 @@ async function runSearchMetricsTest() {
     mediumQualityResults,
     lowQualityResults,
     thresholdRespected,
-    thresholdLevel: 0.5,
+    thresholdLevel: 0.58,
     // Enhanced similarity analysis
     maxSimilarity: parseFloat(maxSimilarity.toFixed(3)),
     minSimilarity: parseFloat(minSimilarity.toFixed(3)),
@@ -579,16 +579,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try {
           const { query, options } = message;
 
-          // Use hybrid search (defaults to 'hybrid' mode)
-          const results = await hybridSearch.search(query, {
-            mode: options?.mode || 'hybrid', // Default to hybrid mode
+          const searchResults = await hybridSearch.search(query, {
+            mode: options?.mode || 'hybrid',
             ...options,
           });
 
-          // Extract page records from SearchResult objects
-          const pages = results.map(r => r.page);
+          const resultsPayload = searchResults.map(result => ({
+            id: result.page.id,
+            url: result.page.url,
+            title: result.page.title,
+            content: result.page.content,
+            similarity: result.similarity ?? null,
+            relevanceScore: result.relevanceScore ?? null,
+            keywordScore: result.keywordScore ?? null,
+            confidence: result.confidence ?? 'low',
+            matchedTerms: result.matchedTerms ?? [],
+            topPassageSnippet: result.topPassageSnippet ?? null,
+            timestamp: result.page.timestamp,
+            dwellTime: result.page.dwellTime,
+            lastAccessed: result.page.lastAccessed,
+            visitCount: result.page.visitCount,
+          }));
 
-          sendResponse({ success: true, results: pages });
+          sendResponse({ success: true, results: resultsPayload });
         } catch (error) {
           console.error('[Recall] Search failed:', error);
           sendResponse({ success: false, error: (error as Error).message });

@@ -295,7 +295,9 @@ async function initializeDatabase(): Promise<void> {
     for (let i = 0; i < page.passages.length; i++) {
       const embedding = await embeddingGemmaService.generateEmbedding(
         page.passages[i],
-        'document'
+        'document',
+        768,
+        page.title  // Include page title for better embedding quality
       );
       
       passagesWithEmbeddings.push({

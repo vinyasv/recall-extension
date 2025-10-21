@@ -75,7 +75,7 @@ export class IndexingPipeline {
 
       // Stage 2: Generate embeddings for passages (PASSAGE-ONLY APPROACH)
       console.log('[IndexingPipeline] Stage 2: Generating', content.passages.length, 'passage embeddings...');
-      const passagesWithEmbeddings = await this._generatePassageEmbeddings(content.passages);
+      const passagesWithEmbeddings = await this._generatePassageEmbeddings(content.passages, content.title);
       console.log('[IndexingPipeline] ✅ Embedded', passagesWithEmbeddings.length, 'passages');
       console.log('[IndexingPipeline] Embedding dimension:', passagesWithEmbeddings[0]?.embedding?.length);
 
@@ -208,8 +208,11 @@ export class IndexingPipeline {
   /**
    * Generate embeddings for passages (batch processing)
    * CRITICAL: All passages must have embeddings - will fail if any embedding generation fails
+   * 
+   * @param passages Array of passages to embed
+   * @param pageTitle Optional page title to include in embeddings (improves quality per official docs)
    */
-  private async _generatePassageEmbeddings(passages: any[]): Promise<any[]> {
+  private async _generatePassageEmbeddings(passages: any[], pageTitle?: string): Promise<any[]> {
     const batchSize = 5; // Process 5 passages at a time
     const passagesWithEmbeddings: any[] = [];
 
@@ -220,7 +223,7 @@ export class IndexingPipeline {
       // Generate embeddings for the batch
       // If this fails, we want the entire indexing job to fail (no silent fallback)
       const batchPromises = batch.map(async (passage) => {
-        const embedding = await this._generateEmbedding(passage.text);
+        const embedding = await this._generateEmbedding(passage.text, pageTitle);
         return {
           ...passage,
           embedding,
@@ -243,10 +246,14 @@ export class IndexingPipeline {
   /**
    * Generate embedding from text
    * Uses 'document' task type for proper EmbeddingGemma prefixing
+   * 
+   * @param text Passage text to embed
+   * @param pageTitle Optional page title (improves embedding quality per official EmbeddingGemma docs)
    */
-  private async _generateEmbedding(text: string): Promise<Float32Array> {
-    // Use 'document' task type for indexing (applies "title: none | text:" prefix)
-    return await embeddingGemmaService.generateEmbedding(text, 'document');
+  private async _generateEmbedding(text: string, pageTitle?: string): Promise<Float32Array> {
+    // Use 'document' task type for indexing (applies "title: {title} | text:" prefix)
+    // Official docs: "providing a title, if available, will improve model performance"
+    return await embeddingGemmaService.generateEmbedding(text, 'document', 768, pageTitle);
   }
 
   /**

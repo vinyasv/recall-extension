@@ -28,6 +28,9 @@ export interface SearchResult {
   /** Matched keywords (optional, for keyword/hybrid search) */
   matchedTerms?: string[];
 
+  /** Text snippet from the top matching passage (optional, semantic only) */
+  topPassageSnippet?: string;
+
   /** Search mode that produced this result (optional) */
   searchMode?: SearchMode;
 
