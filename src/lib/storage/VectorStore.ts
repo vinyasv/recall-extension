@@ -16,7 +16,7 @@ import { loggers } from '../utils/logger';
 import { PERFORMANCE_CONFIG } from '../config/searchConfig';
 
 const DEFAULT_CONFIG: DatabaseConfig = {
-  name: 'RecallVectorDB',
+  name: 'RewindVectorDB',
   version: 6, // Chrome-inspired: passage-only embeddings (no page/title/URL embeddings)
   storeName: 'pages',
 };

@@ -1,5 +1,5 @@
 /**
- * Recall Background Service Worker
+ * Rewind. Background Service Worker
  * Handles extension lifecycle and coordinates background tasks
  */
 
@@ -11,12 +11,84 @@ import { TabMonitor } from './TabMonitor';
 import { indexingQueue } from './IndexingQueue';
 import { indexingPipeline } from './IndexingPipeline';
 import { offscreenManager } from './OffscreenManager';
+import type { PageMetadata, PageRecord } from '../lib/storage/types';
 
-console.log('[Recall] Background service worker started');
+console.log('[Rewind.] Background service worker started');
 
 // Initialize Phase 3 components
 const tabMonitor = new TabMonitor();
 let queueProcessor: ReturnType<typeof setInterval> | null = null;
+
+const HISTORY_CHUNK_SIZE = 100;
+const EXPORT_CHUNK_SIZE = 25;
+
+async function streamPageMetadataToTab(tabId: number, requestId: string, pages: PageMetadata[]): Promise<void> {
+  const totalChunks = Math.ceil(pages.length / HISTORY_CHUNK_SIZE);
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+    const start = chunkIndex * HISTORY_CHUNK_SIZE;
+    const end = start + HISTORY_CHUNK_SIZE;
+    const chunk = pages.slice(start, end);
+
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: 'GET_ALL_PAGES_CHUNK',
+        requestId,
+        chunkIndex,
+        totalChunks,
+        pages: chunk,
+      });
+    } catch (error) {
+      console.warn('[Rewind.] Failed to deliver history chunk:', error);
+      return;
+    }
+  }
+
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'GET_ALL_PAGES_COMPLETE',
+      requestId,
+      totalPages: pages.length,
+      totalChunks,
+    });
+  } catch (error) {
+    console.warn('[Rewind.] Failed to deliver history completion notice:', error);
+  }
+}
+
+async function streamPageRecordsToTab(tabId: number, requestId: string, pages: PageRecord[]): Promise<void> {
+  const totalChunks = Math.ceil(pages.length / EXPORT_CHUNK_SIZE);
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+    const start = chunkIndex * EXPORT_CHUNK_SIZE;
+    const end = start + EXPORT_CHUNK_SIZE;
+    const chunk = pages.slice(start, end);
+
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: 'EXPORT_INDEX_CHUNK',
+        requestId,
+        chunkIndex,
+        totalChunks,
+        pages: chunk,
+      });
+    } catch (error) {
+      console.warn('[Rewind.] Failed to deliver export chunk:', error);
+      return;
+    }
+  }
+
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'EXPORT_INDEX_COMPLETE',
+      requestId,
+      totalPages: pages.length,
+      totalChunks,
+    });
+  } catch (error) {
+    console.warn('[Rewind.] Failed to deliver export completion notice:', error);
+  }
+}
 
 // Flag to track initialization state
 let isInitialized = false;
@@ -26,44 +98,44 @@ let initializationPromise: Promise<void> | null = null;
  * Initialize the extension when installed or updated
  */
 chrome.runtime.onInstalled.addListener(async (details) => {
-  console.log('[Recall] Extension installed/updated:', details.reason);
+  console.log('[Rewind.] Extension installed/updated:', details.reason);
 
   if (details.reason === 'install') {
-    console.log('[Recall] First install - initializing...');
+    console.log('[Rewind.] First install - initializing...');
 
     // Initialize database
     try {
-      console.log('[Recall] Initializing vector database...');
+      console.log('[Rewind.] Initializing vector database...');
       await vectorStore.initialize();
-      console.log('[Recall] Vector database initialized successfully');
+      console.log('[Rewind.] Vector database initialized successfully');
     } catch (error) {
-      console.error('[Recall] Failed to initialize database:', error);
+      console.error('[Rewind.] Failed to initialize database:', error);
     }
 
     // Initialize embedding service in background
     try {
-      console.log('[Recall] Pre-loading EmbeddingGemma...');
+      console.log('[Rewind.] Pre-loading EmbeddingGemma...');
       await embeddingGemmaService.initialize();
       const modelInfo = embeddingGemmaService.getModelInfo();
-      console.log('[Recall] ✅ EmbeddingGemma loaded:', modelInfo.dimensions + 'd', modelInfo.parameters + ' params');
-      console.log('[Recall] Quantized:', modelInfo.quantized, '| Normalized:', modelInfo.normalized);
+      console.log('[Rewind.] ✅ EmbeddingGemma loaded:', modelInfo.dimensions + 'd', modelInfo.parameters + ' params');
+      console.log('[Rewind.] Quantized:', modelInfo.quantized, '| Normalized:', modelInfo.normalized);
     } catch (error) {
-      console.error('[Recall] Failed to initialize EmbeddingGemma:', error);
+      console.error('[Rewind.] Failed to initialize EmbeddingGemma:', error);
     }
 
     // Set default configuration
     await chrome.storage.local.set({
       config: {
         dwellTimeThreshold: 10, // 10 seconds for faster testing
-        maxIndexedPages: 10000,
+        maxIndexedPages: 20000,
         enableAutoIndexing: true,
         version: '1.0.0',
       },
     });
 
-    console.log('[Recall] Initialization complete');
+    console.log('[Rewind.] Initialization complete');
   } else if (details.reason === 'update') {
-    console.log('[Recall] Extension updated from', details.previousVersion);
+    console.log('[Rewind.] Extension updated from', details.previousVersion);
   }
 
   // Initialize Phase 3 components (on both install and update)
@@ -76,63 +148,63 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 async function initializePhase3(): Promise<void> {
   // If already initialized, skip
   if (isInitialized) {
-    console.log('[Recall] Already initialized, skipping...');
+    console.log('[Rewind.] Already initialized, skipping...');
     return;
   }
 
   // If initialization is in progress, wait for it
   if (initializationPromise) {
-    console.log('[Recall] Initialization already in progress, waiting...');
+    console.log('[Rewind.] Initialization already in progress, waiting...');
     await initializationPromise;
     return;
   }
 
   // Create and store the initialization promise
   initializationPromise = (async () => {
-    console.log('[Recall] 🚀 Initializing Phase 3 components...');
+    console.log('[Rewind.] 🚀 Initializing Phase 3 components...');
 
   try {
     // Chrome AI API (for RAG Q&A) is optional - checked when needed
-    console.log('[Recall] ✅ Ready to start indexing');
+    console.log('[Rewind.] ✅ Ready to start indexing');
 
     // Initialize indexing queue
-    console.log('[Recall] Initializing indexing queue...');
+    console.log('[Rewind.] Initializing indexing queue...');
     await indexingQueue.initialize();
 
     // Clear any stale items from the queue (from tabs open before extension reload)
     const queueSize = indexingQueue.size();
     if (queueSize > 0) {
-      console.log(`[Recall] Clearing ${queueSize} stale items from queue (from before extension reload)`);
+      console.log(`[Rewind.] Clearing ${queueSize} stale items from queue (from before extension reload)`);
       await indexingQueue.clear();
     }
 
-    console.log('[Recall] ✅ Indexing queue ready');
+    console.log('[Rewind.] ✅ Indexing queue ready');
 
     // Initialize indexing pipeline
-    console.log('[Recall] Initializing indexing pipeline...');
+    console.log('[Rewind.] Initializing indexing pipeline...');
     await indexingPipeline.initialize();
-    console.log('[Recall] ✅ Indexing pipeline ready');
+    console.log('[Rewind.] ✅ Indexing pipeline ready');
 
     // Initialize tab monitor with callback
-    console.log('[Recall] Initializing tab monitor...');
+    console.log('[Rewind.] Initializing tab monitor...');
     await tabMonitor.initialize(async (tabInfo) => {
-      console.log('[Recall] 📄 Page loaded, queuing for indexing:', tabInfo.url);
+      console.log('[Rewind.] 📄 Page loaded, queuing for indexing:', tabInfo.url);
       await indexingQueue.add(tabInfo);
       updateBadge();
     });
-    console.log('[Recall] ✅ Tab monitor ready (indexing on page load)');
+    console.log('[Rewind.] ✅ Tab monitor ready (indexing on page load)');
 
     // Start queue processor
     startQueueProcessor();
-    console.log('[Recall] ✅ Queue processor started');
+    console.log('[Rewind.] ✅ Queue processor started');
 
-    console.log('[Recall] 🎉 Initialization complete!');
-    console.log('[Recall] Ready to index pages with passage-based embeddings');
+    console.log('[Rewind.] 🎉 Initialization complete!');
+    console.log('[Rewind.] Ready to index pages with passage-based embeddings');
 
     // Mark as initialized
     isInitialized = true;
   } catch (error) {
-    console.error('[Recall] ❌ Failed to initialize Phase 3:', error);
+    console.error('[Rewind.] ❌ Failed to initialize Phase 3:', error);
     throw error; // Re-throw to propagate to the promise
   }
   })();
@@ -147,18 +219,18 @@ async function initializePhase3(): Promise<void> {
  */
 function startQueueProcessor(): void {
   if (queueProcessor) {
-    console.log('[Recall] Queue processor already running, skipping start');
+    console.log('[Rewind.] Queue processor already running, skipping start');
     return;
   }
 
   queueProcessor = setInterval(() => {
     // Fire-and-forget: Don't await to keep service worker responsive
     processNextQueueItem().catch(err => {
-      console.error('[Recall] ❌ Queue processor error:', err);
+      console.error('[Rewind.] ❌ Queue processor error:', err);
     });
   }, 500); // Check every 500ms
 
-  console.log('[Recall] Queue processor started');
+  console.log('[Rewind.] Queue processor started');
 }
 
 /**
@@ -176,7 +248,7 @@ async function processNextQueueItem(): Promise<void> {
     return;
   }
 
-  console.log('[Recall] 🔄 Processing queued page:', next.url);
+  console.log('[Rewind.] 🔄 Processing queued page:', next.url);
 
   // Process the page with timeout (10s for better responsiveness)
   indexingQueue.setProcessing(true);
@@ -189,7 +261,7 @@ async function processNextQueueItem(): Promise<void> {
       indexingPipeline.processPage(next),
       new Promise<{ success: false; error: string }>((resolve) => {
         timeoutId = setTimeout(() => {
-          console.warn('[Recall] ⏱️ Indexing timeout for:', next.url, '- skipping');
+          console.warn('[Rewind.] ⏱️ Indexing timeout for:', next.url, '- skipping');
           resolve({ success: false, error: 'Timeout (10s) - skipped' });
         }, 10000); // 10 seconds
       })
@@ -202,13 +274,13 @@ async function processNextQueueItem(): Promise<void> {
 
     if (result.success) {
       await indexingQueue.markComplete(next.id);
-      console.log('[Recall] ✅ Page indexed:', next.url);
+      console.log('[Rewind.] ✅ Page indexed:', next.url);
     } else {
       await indexingQueue.markFailed(next.id, result.error || 'Unknown error');
-      console.warn('[Recall] ⚠️ Skipped page:', next.url, '-', result.error);
+      console.warn('[Rewind.] ⚠️ Skipped page:', next.url, '-', result.error);
     }
   } catch (error) {
-    console.error('[Recall] ❌ Indexing error:', next.url, error);
+    console.error('[Rewind.] ❌ Indexing error:', next.url, error);
     await indexingQueue.markFailed(next.id, (error as Error).message);
   } finally {
     indexingQueue.setProcessing(false);
@@ -233,7 +305,7 @@ function updateBadge(): void {
  * Handle extension startup
  */
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('[Recall] Browser started, extension active');
+  console.log('[Rewind.] Browser started, extension active');
 
   // Reinitialize Phase 3 components on browser startup
   await initializePhase3();
@@ -243,7 +315,7 @@ chrome.runtime.onStartup.addListener(async () => {
  * Run comprehensive search metrics test
  */
 async function runSearchMetricsTest() {
-  console.log('[Recall] 🧪 Starting search metrics test...');
+  console.log('[Rewind.] 🧪 Starting search metrics test...');
 
   // Test configuration - improved queries that actually match test content
   const testQueries = [
@@ -300,7 +372,7 @@ async function runSearchMetricsTest() {
 
   // Run tests for each query and mode
   for (const query of testQueries) {
-    console.log(`[Recall] Testing query: "${query}"`);
+    console.log(`[Rewind.] Testing query: "${query}"`);
 
     const queryResults: typeof results.sampleQueries[string] = {
       totalTime: 0,
@@ -348,12 +420,12 @@ async function runSearchMetricsTest() {
             similarities
           });
 
-          console.log(`[Recall] ${mode} (k=${k}): ${searchResults.length} results in ${searchTime.toFixed(2)}ms (avg sim: ${avgSimilarity.toFixed(3)})`);
+          console.log(`[Rewind.] ${mode} (k=${k}): ${searchResults.length} results in ${searchTime.toFixed(2)}ms (avg sim: ${avgSimilarity.toFixed(3)})`);
 
           totalTests++;
 
         } catch (error) {
-          console.error(`[Recall] Search failed for query "${query}" with mode ${mode}:`, error);
+          console.error(`[Rewind.] Search failed for query "${query}" with mode ${mode}:`, error);
           // Still record a failed test
           const stats = modeStats.get(mode)!;
           stats.times.push(0);
@@ -429,7 +501,7 @@ async function runSearchMetricsTest() {
       : 0
   };
 
-  console.log('[Recall] 📊 Search metrics test completed:', { totalTests, avgSearchTime, thresholdRespected });
+  console.log('[Rewind.] 📊 Search metrics test completed:', { totalTests, avgSearchTime, thresholdRespected });
 
   return {
     results,
@@ -481,7 +553,7 @@ function createPassagesFromContent(content: string): Array<{
  * Handle messages from other parts of the extension
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[Recall] Received message:', message.type, 'from:', sender.tab?.id || 'popup');
+  console.log('[Rewind.] Received message:', message.type, 'from:', sender.tab?.id || 'popup');
 
   // Handle different message types
   switch (message.type) {
@@ -491,7 +563,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'GET_STATUS':
       // Get status including database stats
-      console.log('[Recall] GET_STATUS request received');
+      console.log('[Rewind.] GET_STATUS request received');
       vectorStore
         .getStats()
         .then((dbStats) => {
@@ -502,72 +574,142 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             modelInfo,
             dbStats,
           };
-          console.log('[Recall] Sending status response:', response);
+          console.log('[Rewind.] Sending status response:', response);
           sendResponse(response);
         })
         .catch((error) => {
-          console.error('[Recall] Failed to get stats:', error);
+          console.error('[Rewind.] Failed to get stats:', error);
           const response = {
             initialized: embeddingGemmaService.isInitialized(),
             cacheStats: embeddingGemmaService.getCacheStats(),
             dbStats: null,
             error: error.message,
           };
-          console.log('[Recall] Sending error response:', response);
+          console.log('[Rewind.] Sending error response:', response);
           sendResponse(response);
         });
       return true; // Async response
 
     case 'GET_DB_STATS':
       // Get database statistics
-      console.log('[Recall] GET_DB_STATS request received');
+      console.log('[Rewind.] GET_DB_STATS request received');
       vectorStore
         .getStats()
         .then((stats) => {
-          console.log('[Recall] Sending DB stats:', stats);
+          console.log('[Rewind.] Sending DB stats:', stats);
           sendResponse({ success: true, stats });
         })
         .catch((error) => {
-          console.error('[Recall] Failed to get DB stats:', error);
+          console.error('[Rewind.] Failed to get DB stats:', error);
           sendResponse({ success: false, error: error.message });
         });
       return true;
 
     case 'GET_ALL_PAGES':
       // Get all pages (chronologically)
-      console.log('[Recall] GET_ALL_PAGES request received');
-      vectorStore
-        .getAllPages()
-        .then((pages) => {
-          console.log('[Recall] Sending', pages.length, 'pages');
-          sendResponse({ success: true, pages });
-        })
-        .catch((error) => {
-          console.error('[Recall] Failed to get all pages:', error);
-          sendResponse({ success: false, error: error.message });
-        });
+      console.log('[Rewind.] GET_ALL_PAGES request received');
+      (async () => {
+        const tabId = sender.tab?.id;
+        if (typeof tabId !== 'number') {
+          const errorMessage = 'GET_ALL_PAGES requires a tab context';
+          console.warn('[Rewind.] Unable to stream pages - missing tab context');
+          sendResponse({ success: false, error: errorMessage });
+          return;
+        }
+
+        try {
+          const pages = await vectorStore.getAllPageMetadata();
+          console.log('[Rewind.] Retrieved metadata for', pages.length, 'pages');
+
+          if (pages.length === 0) {
+            sendResponse({ success: true, pages: [] });
+            return;
+          }
+
+          if (pages.length <= HISTORY_CHUNK_SIZE) {
+            sendResponse({ success: true, pages });
+            return;
+          }
+
+          const requestId = crypto.randomUUID();
+          sendResponse({
+            success: true,
+            chunked: true,
+            requestId,
+            total: pages.length,
+            chunkSize: HISTORY_CHUNK_SIZE,
+          });
+
+          await streamPageMetadataToTab(tabId, requestId, pages);
+        } catch (error) {
+          console.error('[Rewind.] Failed to get all pages:', error);
+          sendResponse({ success: false, error: (error as Error).message });
+        }
+      })();
+      return true;
+
+    case 'EXPORT_INDEX':
+      console.log('[Rewind.] EXPORT_INDEX request received');
+      (async () => {
+        const tabId = sender.tab?.id;
+        if (typeof tabId !== 'number') {
+          const errorMessage = 'EXPORT_INDEX requires a tab context';
+          console.warn('[Rewind.] Unable to export index - missing tab context');
+          sendResponse({ success: false, error: errorMessage });
+          return;
+        }
+
+        try {
+          const pages = await vectorStore.getAllPages();
+          console.log('[Rewind.] Retrieved', pages.length, 'pages for export');
+
+          if (pages.length === 0) {
+            sendResponse({ success: true, pages: [] });
+            return;
+          }
+
+          if (pages.length <= EXPORT_CHUNK_SIZE) {
+            sendResponse({ success: true, pages });
+            return;
+          }
+
+          const requestId = crypto.randomUUID();
+          sendResponse({
+            success: true,
+            chunked: true,
+            requestId,
+            total: pages.length,
+            chunkSize: EXPORT_CHUNK_SIZE,
+          });
+
+          await streamPageRecordsToTab(tabId, requestId, pages);
+        } catch (error) {
+          console.error('[Rewind.] Failed to export index:', error);
+          sendResponse({ success: false, error: (error as Error).message });
+        }
+      })();
       return true;
 
     case 'CLEAR_HISTORY':
       // Clear all history from IndexedDB
-      console.log('[Recall] CLEAR_HISTORY request received');
+      console.log('[Rewind.] CLEAR_HISTORY request received');
       vectorStore
         .clearAll()
         .then(() => {
-          console.log('[Recall] All history cleared successfully');
+          console.log('[Rewind.] All history cleared successfully');
           // Also clear the indexing queue to remove stale items
           indexingQueue
             .clear()
             .then(() => {
-              console.log('[Recall] Indexing queue cleared after history wipe');
+              console.log('[Rewind.] Indexing queue cleared after history wipe');
             })
             .catch((queueError) => {
-              console.error('[Recall] Failed to clear indexing queue:', queueError);
+              console.error('[Rewind.] Failed to clear indexing queue:', queueError);
             });
           sendResponse({ success: true });
         })
         .catch((error) => {
-          console.error('[Recall] Failed to clear history:', error);
+          console.error('[Rewind.] Failed to clear history:', error);
           sendResponse({ success: false, error: error.message });
         });
       return true;
@@ -603,7 +745,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           sendResponse({ success: true, results: resultsPayload });
         } catch (error) {
-          console.error('[Recall] Search failed:', error);
+          console.error('[Rewind.] Search failed:', error);
           sendResponse({ success: false, error: (error as Error).message });
         }
       })();
@@ -632,7 +774,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           sendResponse({ success: true, id });
         } catch (error) {
-          console.error('[Recall] Failed to add test page:', error);
+          console.error('[Rewind.] Failed to add test page:', error);
           sendResponse({ success: false, error: (error as Error).message });
         }
       })();
@@ -671,7 +813,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await vectorStore.updatePage(pageId, { lastAccessed: Date.now() });
           sendResponse({ success: true });
         } catch (error) {
-          console.error('[Recall] Failed to update lastAccessed:', error);
+          console.error('[Rewind.] Failed to update lastAccessed:', error);
           sendResponse({ success: false, error: (error as Error).message });
         }
       })();
@@ -696,7 +838,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (queueProcessor) {
         clearInterval(queueProcessor);
         queueProcessor = null;
-        console.log('[Recall] Indexing paused');
+        console.log('[Rewind.] Indexing paused');
         sendResponse({ success: true });
       } else {
         sendResponse({ success: false, error: 'Already paused' });
@@ -721,7 +863,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           // Also reset processing flag in case it's stuck
           indexingQueue.setProcessing(false);
           updateBadge();
-          console.log('[Recall] Queue cleared and processing flag reset');
+          console.log('[Rewind.] Queue cleared and processing flag reset');
           sendResponse({ success: true });
         })
         .catch((error) => {
@@ -734,7 +876,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Run comprehensive search metrics test
       (async () => {
         try {
-          console.log('[Recall] Running search metrics test...');
+          console.log('[Rewind.] Running search metrics test...');
 
           // Get database stats first
           const dbStats = await vectorStore.getStats();
@@ -744,10 +886,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           const metrics = await runSearchMetricsTest();
 
-          console.log('[Recall] Search metrics test completed:', metrics);
+          console.log('[Rewind.] Search metrics test completed:', metrics);
           sendResponse({ success: true, metrics });
         } catch (error) {
-          console.error('[Recall] Search metrics test failed:', error);
+          console.error('[Rewind.] Search metrics test failed:', error);
           sendResponse({
             success: false,
             error: (error as Error).message,
@@ -762,7 +904,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { text } = message;
-          console.log('[Recall] Testing embeddings with:', { textLength: text.length });
+          console.log('[Rewind.] Testing embeddings with:', { textLength: text.length });
 
           // Ensure embedding service is initialized
           await embeddingGemmaService.initialize();
@@ -778,7 +920,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           const modelInfo = embeddingGemmaService.getModelInfo();
 
-          console.log('[Recall] Embedding test successful:', {
+          console.log('[Rewind.] Embedding test successful:', {
             dimensions: queryEmbedding.length,
             queryTime: queryTime.toFixed(2),
             docTime: docTime.toFixed(2),
@@ -797,7 +939,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             normalized: modelInfo.normalized
           });
         } catch (error) {
-          console.error('[Recall] Embedding test failed:', error);
+          console.error('[Rewind.] Embedding test failed:', error);
           sendResponse({
             success: false,
             error: (error as Error).message,
@@ -811,7 +953,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           const { queries } = message;
-          console.log('[Recall] Testing hybrid search with queries:', queries);
+          console.log('[Rewind.] Testing hybrid search with queries:', queries);
 
           const results = [];
 
@@ -834,14 +976,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
           }
 
-          console.log('[Recall] Hybrid search test successful:', results);
+          console.log('[Rewind.] Hybrid search test successful:', results);
 
           sendResponse({
             success: true,
             results
           });
         } catch (error) {
-          console.error('[Recall] Hybrid search test failed:', error);
+          console.error('[Rewind.] Hybrid search test failed:', error);
           sendResponse({
             success: false,
             error: (error as Error).message,
@@ -852,14 +994,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'PROMPT_RESPONSE':
       // Handle response from offscreen Prompt API
-      console.log('[Recall] Received prompt response:', message.response.id);
+      console.log('[Rewind.] Received prompt response:', message.response.id);
       offscreenManager.handlePromptResponse(message.response);
       return false;
 
     case 'CONTENT_SCRIPT_READY':
       // Content script has loaded and is ready
       // This is just a notification, no action needed
-      console.log('[Recall] Content script ready on tab:', sender.tab?.id);
+      console.log('[Rewind.] Content script ready on tab:', sender.tab?.id);
       sendResponse({ status: 'ok' });
       return false;
 
@@ -870,7 +1012,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const available = await ragController.isAvailable();
           sendResponse({ available });
         } catch (error) {
-          console.error('[Recall] Failed to check RAG availability:', error);
+          console.error('[Rewind.] Failed to check RAG availability:', error);
           sendResponse({ available: false });
         }
       })();
@@ -884,7 +1026,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const result = await ragController.answerQuestion(question, options);
           sendResponse({ success: true, result });
         } catch (error) {
-          console.error('[Recall] RAG query failed:', error);
+          console.error('[Rewind.] RAG query failed:', error);
           sendResponse({
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error'
@@ -894,7 +1036,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true; // Keep message channel open for async response
 
     default:
-      console.warn('[Recall] Unknown message type:', message.type);
+      console.warn('[Rewind.] Unknown message type:', message.type);
       sendResponse({ error: 'Unknown message type' });
       return false;
   }
@@ -906,7 +1048,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 const KEEP_ALIVE_INTERVAL = 20000; // 20 seconds
 setInterval(() => {
-  console.log('[Recall] Service worker keepalive ping');
+  console.log('[Rewind.] Service worker keepalive ping');
 }, KEEP_ALIVE_INTERVAL);
 
 /**
@@ -914,7 +1056,7 @@ setInterval(() => {
  */
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'toggle-sidebar') {
-    console.log('[Recall] Keyboard shortcut (Cmd+Shift+E) triggered from background');
+    console.log('[Rewind.] Keyboard shortcut (Cmd+Shift+E) triggered from background');
     await toggleSidebarOnActiveTab();
   }
 });
@@ -923,13 +1065,13 @@ chrome.commands.onCommand.addListener(async (command) => {
  * Handle extension icon click
  */
 chrome.action.onClicked.addListener(async (tab) => {
-  console.log('[Recall] ===== EXTENSION ICON CLICKED =====');
-  console.log('[Recall] Clicked tab:', { id: tab.id, url: tab.url, title: tab.title });
+  console.log('[Rewind.] ===== EXTENSION ICON CLICKED =====');
+  console.log('[Rewind.] Clicked tab:', { id: tab.id, url: tab.url, title: tab.title });
   try {
     await toggleSidebarOnActiveTab();
-    console.log('[Recall] ===== ICON CLICK HANDLED SUCCESSFULLY =====');
+    console.log('[Rewind.] ===== ICON CLICK HANDLED SUCCESSFULLY =====');
   } catch (error) {
-    console.error('[Recall] ===== ICON CLICK FAILED =====', error);
+    console.error('[Rewind.] ===== ICON CLICK FAILED =====', error);
   }
 });
 
@@ -939,72 +1081,72 @@ chrome.action.onClicked.addListener(async (tab) => {
  */
 async function toggleSidebarOnActiveTab(): Promise<void> {
   try {
-    console.log('[Recall] toggleSidebarOnActiveTab() called');
+    console.log('[Rewind.] toggleSidebarOnActiveTab() called');
     
     // Get active tab
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    console.log('[Recall] Query returned tabs:', tabs.length);
+    console.log('[Rewind.] Query returned tabs:', tabs.length);
     const activeTab = tabs[0];
 
     if (!activeTab?.id) {
-      console.warn('[Recall] ❌ No active tab found');
+      console.warn('[Rewind.] ❌ No active tab found');
       return;
     }
 
-    console.log('[Recall] Active tab:', { id: activeTab.id, url: activeTab.url, title: activeTab.title });
+    console.log('[Rewind.] Active tab:', { id: activeTab.id, url: activeTab.url, title: activeTab.title });
 
     // Check if this is a restricted page
     if (activeTab.url?.startsWith('chrome://') ||
         activeTab.url?.startsWith('chrome-extension://') ||
         activeTab.url?.startsWith('edge://')) {
-      console.warn('[Recall] ❌ Cannot run on restricted pages (chrome://, chrome-extension://, etc)');
+      console.warn('[Rewind.] ❌ Cannot run on restricted pages (chrome://, chrome-extension://, etc)');
       return;
     }
 
-    console.log('[Recall] 📤 Sending TOGGLE_SIDEBAR to tab:', activeTab.id);
+    console.log('[Rewind.] 📤 Sending TOGGLE_SIDEBAR to tab:', activeTab.id);
 
     // Try to send message to content script
     try {
       const response = await chrome.tabs.sendMessage(activeTab.id, { type: 'TOGGLE_SIDEBAR' });
-      console.log('[Recall] ✅ TOGGLE_SIDEBAR message sent successfully, response:', response);
+      console.log('[Rewind.] ✅ TOGGLE_SIDEBAR message sent successfully, response:', response);
     } catch (error: any) {
-      console.error('[Recall] ❌ Error sending TOGGLE_SIDEBAR:', error);
+      console.error('[Rewind.] ❌ Error sending TOGGLE_SIDEBAR:', error);
       if (error.message?.includes('Could not establish connection') ||
           error.message?.includes('Receiving end does not exist')) {
-        console.error('[Recall] 💡 Content script not loaded. This usually means:');
-        console.error('[Recall]    1. The page was loaded before the extension was installed/updated');
-        console.error('[Recall]    2. The page blocks content scripts (chrome:// pages, etc)');
-        console.error('[Recall]    3. Try refreshing the page (F5 or Cmd+R)');
+        console.error('[Rewind.] 💡 Content script not loaded. This usually means:');
+        console.error('[Rewind.]    1. The page was loaded before the extension was installed/updated');
+        console.error('[Rewind.]    2. The page blocks content scripts (chrome:// pages, etc)');
+        console.error('[Rewind.]    3. Try refreshing the page (F5 or Cmd+R)');
         
         // Try to inject content script manually if not loaded
-        console.log('[Recall] Attempting to manually inject content script...');
+        console.log('[Rewind.] Attempting to manually inject content script...');
         try {
           await chrome.scripting.executeScript({
             target: { tabId: activeTab.id },
             files: ['assets/index.ts-loader-eNwBVaYy.js']
           });
-          console.log('[Recall] ✅ Content script injected, retrying toggle...');
+          console.log('[Rewind.] ✅ Content script injected, retrying toggle...');
           // Wait a bit for script to initialize
           await new Promise(resolve => setTimeout(resolve, 500));
           // Retry sending message
           await chrome.tabs.sendMessage(activeTab.id, { type: 'TOGGLE_SIDEBAR' });
-          console.log('[Recall] ✅ TOGGLE_SIDEBAR sent after manual injection');
+          console.log('[Rewind.] ✅ TOGGLE_SIDEBAR sent after manual injection');
         } catch (injectError) {
-          console.error('[Recall] ❌ Failed to inject content script:', injectError);
+          console.error('[Rewind.] ❌ Failed to inject content script:', injectError);
         }
       } else {
         throw error;
       }
     }
   } catch (error) {
-    console.error('[Recall] ❌ Fatal error toggling sidebar:', error);
+    console.error('[Rewind.] ❌ Fatal error toggling sidebar:', error);
   }
 }
 
-console.log('[Recall] Background service worker ready');
+console.log('[Rewind.] Background service worker ready');
 
 // Initialize Phase 3 components immediately when service worker starts
 // This ensures initialization happens even when extension is reloaded during development
 initializePhase3().catch((error) => {
-  console.error('[Recall] Failed to initialize on service worker start:', error);
+  console.error('[Rewind.] Failed to initialize on service worker start:', error);
 });

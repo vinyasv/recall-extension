@@ -1,8 +1,8 @@
 /**
- * Rewind Popup - Enhanced UI with testing capabilities
+ * Rewind. Popup - Enhanced UI with testing capabilities
  */
 
-console.log('[Rewind Popup] Initializing enhanced popup...');
+console.log('[Rewind. Popup] Initializing enhanced popup...');
 
 // DOM Elements
 const statusEl = document.getElementById('status') as HTMLDivElement;
@@ -44,7 +44,7 @@ function showStatus(message: string, type: 'success' | 'error' | 'info' = 'info'
 
   // Don't clear persistent status unless explicitly requested
   if ((statusEl as any)._isPersistent && !persistent) {
-    console.log('[Rewind Popup] Not clearing persistent status');
+    console.log('[Rewind. Popup] Not clearing persistent status');
     return;
   }
 
@@ -79,7 +79,7 @@ function showStatus(message: string, type: 'success' | 'error' | 'info' = 'info'
     // Mark as persistent to prevent auto-clearing
     (statusEl as any)._isPersistent = true;
 
-    console.log('[Rewind Popup] Showing persistent status:', type);
+    console.log('[Rewind. Popup] Showing persistent status:', type);
   } else {
     // Mark as non-persistent
     (statusEl as any)._isPersistent = false;
@@ -93,7 +93,7 @@ function showStatus(message: string, type: 'success' | 'error' | 'info' = 'info'
       }
     }, 10000);
 
-    console.log('[Rewind Popup] Showing temporary status:', type);
+    console.log('[Rewind. Popup] Showing temporary status:', type);
   }
 }
 
@@ -155,7 +155,7 @@ async function checkPipelineStatus(): Promise<void> {
       });
     }
   } catch (error) {
-    console.error('[Rewind Popup] Error checking pipeline status:', error);
+    console.error('[Rewind. Popup] Error checking pipeline status:', error);
     updatePipelineStatus({
       indexing: 'error',
       queueSize: 0,
@@ -217,7 +217,7 @@ async function loadAIMetrics(): Promise<void> {
 
     updateAIMetrics(metrics);
   } catch (error) {
-    console.error('[Rewind Popup] Failed to load AI metrics:', error);
+    console.error('[Rewind. Popup] Failed to load AI metrics:', error);
   }
 }
 
@@ -235,7 +235,7 @@ async function saveAIMetrics(metrics: {
   try {
     await chrome.storage.local.set({ aiMetrics: metrics });
   } catch (error) {
-    console.error('[Rewind Popup] Failed to save AI metrics:', error);
+    console.error('[Rewind. Popup] Failed to save AI metrics:', error);
   }
 }
 
@@ -261,7 +261,7 @@ async function checkChromeAIAvailability(): Promise<void> {
       updateChromeAIStatus(false, response?.error || 'API test failed');
     }
   } catch (error) {
-    console.error('[Rewind Popup] Error checking Chrome AI:', error);
+    console.error('[Rewind. Popup] Error checking Chrome AI:', error);
     updateChromeAIStatus(false, `Connection error: ${(error as Error).message}`);
   }
 }
@@ -354,7 +354,7 @@ async function toggleSidebar(): Promise<void> {
       )
     ]);
 
-    console.log('[Rewind Popup] Sidebar toggled successfully:', response);
+    console.log('[Rewind. Popup] Sidebar toggled successfully:', response);
     showStatus('Sidebar opened successfully!', 'success', true);
 
     // Small delay before closing so sidebar can open
@@ -363,7 +363,7 @@ async function toggleSidebar(): Promise<void> {
     }, 500);
 
   } catch (error) {
-    console.error('[Rewind Popup] Error toggling sidebar:', error);
+    console.error('[Rewind. Popup] Error toggling sidebar:', error);
     showStatus(`Failed to open sidebar\nTry keyboard shortcut: ⌘⇧E`, 'error');
   }
 }
@@ -392,7 +392,7 @@ async function showStats(): Promise<void> {
     showStatus(message, 'success', true);
 
   } catch (error) {
-    console.error('[Rewind Popup] Error getting stats:', error);
+    console.error('[Rewind. Popup] Error getting stats:', error);
     showStatus(`Failed to get stats: ${error}`, 'error');
   }
 }
@@ -435,7 +435,7 @@ async function testAI(): Promise<void> {
 
     // Test summarizer with real page content
     // First ensure user activation by clicking, then test summarizer
-    console.log('[Rewind Popup] Sending TEST_SUMMARIZER request...', {
+    console.log('[Rewind. Popup] Sending TEST_SUMMARIZER request...', {
       textLength: pageContent.length,
       url: pageUrl,
       title: pageTitle,
@@ -450,10 +450,10 @@ async function testAI(): Promise<void> {
       maxLength: 300
     });
 
-    console.log('[Rewind Popup] Received TEST_SUMMARIZER response:', response);
+    console.log('[Rewind. Popup] Received TEST_SUMMARIZER response:', response);
 
     if (!response?.success) {
-      console.error('[Rewind Popup] TEST_SUMMARIZER failed:', {
+      console.error('[Rewind. Popup] TEST_SUMMARIZER failed:', {
         success: response?.success,
         error: response?.error,
         summary: response?.summary,
@@ -495,7 +495,7 @@ async function testAI(): Promise<void> {
       updateAIMetrics(metrics);
       await saveAIMetrics(metrics);
     } catch (error) {
-      console.error('[Rewind Popup] Failed to update AI metrics:', error);
+      console.error('[Rewind. Popup] Failed to update AI metrics:', error);
     }
 
     const message = `✅ AI Summarizer Working!\n\n` +
@@ -510,7 +510,7 @@ async function testAI(): Promise<void> {
     showStatus(message, 'success', true);
 
   } catch (error) {
-    console.error('[Rewind Popup] Error testing AI:', error);
+    console.error('[Rewind. Popup] Error testing AI:', error);
 
     // Provide more helpful error messages
     let errorMessage = `${error}`;
@@ -541,7 +541,7 @@ async function testAI(): Promise<void> {
       updateAIMetrics(metrics);
       await saveAIMetrics(metrics);
     } catch (error) {
-      console.error('[Rewind Popup] Failed to update AI metrics on failure:', error);
+      console.error('[Rewind. Popup] Failed to update AI metrics on failure:', error);
     }
   } finally {
     setButtonLoading(testAIBtn, false);
@@ -578,7 +578,7 @@ async function testEmbeddings(): Promise<void> {
     showStatus(message, 'success', true);
 
   } catch (error) {
-    console.error('[Rewind Popup] Error testing embeddings:', error);
+    console.error('[Rewind. Popup] Error testing embeddings:', error);
     showStatus(`❌ Embedding test failed\n\n${error}`, 'error', true);
   } finally {
     setButtonLoading(testEmbeddingsBtn, false);
@@ -623,7 +623,7 @@ async function testHybridSearch(): Promise<void> {
     showStatus(message, 'success', true);
 
   } catch (error) {
-    console.error('[Rewind Popup] Error testing hybrid search:', error);
+    console.error('[Rewind. Popup] Error testing hybrid search:', error);
     showStatus(`❌ Hybrid search test failed\n\n${error}`, 'error', true);
   } finally {
     setButtonLoading(testHybridSearchBtn, false);
@@ -655,7 +655,7 @@ async function testSearchMetrics(): Promise<void> {
     showStatus(message, 'success', true);
 
   } catch (error) {
-    console.error('[Rewind Popup] Error testing search metrics:', error);
+    console.error('[Rewind. Popup] Error testing search metrics:', error);
     showStatus(`❌ Search metrics test failed\n\n${error}`, 'error', true);
   } finally {
     setButtonLoading(testSearchBtn, false);
@@ -764,17 +764,17 @@ async function addTestData(): Promise<void> {
 
         if (response?.success) {
           addedCount++;
-          console.log(`[Rewind Popup] Added test page: ${page.title}`);
+          console.log(`[Rewind. Popup] Added test page: ${page.title}`);
         }
       } catch (error) {
-        console.error(`[Rewind Popup] Failed to add test page: ${page.title}`, error);
+        console.error(`[Rewind. Popup] Failed to add test page: ${page.title}`, error);
       }
     }
 
     showStatus(`✅ Added ${addedCount} test pages for search testing!`, 'success', true);
 
   } catch (error) {
-    console.error('[Rewind Popup] Error adding test data:', error);
+    console.error('[Rewind. Popup] Error adding test data:', error);
     showStatus(`❌ Failed to add test data\n\n${error}`, 'error', true);
   } finally {
     setButtonLoading(addTestDataBtn, false);
@@ -803,7 +803,7 @@ async function clearAllData(): Promise<void> {
     showStatus('✅ All data cleared successfully!', 'success', true);
 
   } catch (error) {
-    console.error('[Rewind Popup] Error clearing data:', error);
+    console.error('[Rewind. Popup] Error clearing data:', error);
     showStatus(`❌ Failed to clear data\n\n${error}`, 'error', true);
   } finally {
     setButtonLoading(clearDataBtn, false);
@@ -845,7 +845,7 @@ function initialize(): void {
     }
   });
 
-  console.log('[Rewind Popup] Enhanced popup initialized with testing controls and monitoring');
+  console.log('[Rewind. Popup] Enhanced popup initialized with testing controls and monitoring');
 }
 
 // Initialize when DOM is ready

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Rewind** is a Chrome Extension (Manifest V3) that provides private, on-device **hybrid search** over browser history using semantic vectors + keyword search. All AI processing happens locally using Chrome's Summarizer API (Gemini Nano) and Transformers.js with WebAssembly - no data is sent to external servers.
+**Rewind.** is a Chrome Extension (Manifest V3) that provides private, on-device **hybrid search** over browser history using semantic vectors + keyword search. All AI processing happens locally using Chrome's Summarizer API (Gemini Nano) and Transformers.js with WebAssembly - no data is sent to external servers.
 
 **Key Features:**
 - Hybrid search with Reciprocal Rank Fusion (RRF)

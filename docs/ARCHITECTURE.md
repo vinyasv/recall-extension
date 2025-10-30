@@ -1,4 +1,4 @@
-# Recall - Architecture & Technical Overview
+# Rewind. - Architecture & Technical Overview
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@
 
 ## Project Overview
 
-**Recall** is a privacy-first Chrome Extension (Manifest V3) that provides intelligent hybrid search over browser history. All processing happens locally on-device using Chrome's built-in AI capabilities and WebAssembly-based machine learning.
+**Rewind.** is a privacy-first Chrome Extension (Manifest V3) that provides intelligent hybrid search over browser history. All processing happens locally on-device using Chrome's built-in AI capabilities and WebAssembly-based machine learning.
 
 ### Key Features
 
@@ -201,7 +201,7 @@ src/
        │
        ▼
 ┌──────────────────────────────────────────────────────────┐
-│ HybridSearch (default mode, α=0.7)                       │
+│ HybridSearch (default mode, α=0.9)                       │
 │                                                           │
 │  ┌─────────────────────┐    ┌──────────────────────┐    │
 │  │ Semantic Search     │    │ Keyword Search       │    │
@@ -338,12 +338,15 @@ TabMonitor → IndexingQueue → IndexingPipeline → VectorStore
 SEARCH_QUERY          → HybridSearch.search()
 RAG_QUERY             → RAGController.answerQuestion()
 GET_DB_STATS          → VectorStore.getStats()
-GET_ALL_PAGES         → VectorStore.getAllPages()
+GET_ALL_PAGES         → VectorStore.getAllPageMetadata()  // Chunked streaming
+EXPORT_INDEX          → VectorStore.getAllPages()         // Chunked streaming
 CLEAR_HISTORY         → VectorStore.clear()
 PAUSE_INDEXING        → IndexingQueue.pause()
 RESUME_INDEXING       → IndexingQueue.resume()
 GET_QUEUE_STATUS      → IndexingQueue.getStatus()
 ```
+
+`GET_ALL_PAGES` and `EXPORT_INDEX` send only a small handshake response directly. When the caller requests more than `HISTORY_CHUNK_SIZE` (100) or `EXPORT_CHUNK_SIZE` (25) records, the service worker streams payloads back to the tab via `GET_ALL_PAGES_CHUNK` / `GET_ALL_PAGES_COMPLETE` and `EXPORT_INDEX_CHUNK` / `EXPORT_INDEX_COMPLETE` messages to avoid Chrome’s message-length ceiling.
 
 ### TabMonitor (background/TabMonitor.ts)
 
@@ -756,40 +759,43 @@ const [semanticResults, keywordResults] = await Promise.all([
 ])
 
 // 2. Apply Weighted Reciprocal Rank Fusion
-const alpha = options.alpha || 0.7  // Default: 70% semantic, 30% keyword
+const requestedAlpha = options.alpha ?? RRF_CONFIG.DEFAULT_ALPHA  // Default: 0.9
+const alpha = sanitizeAlpha(requestedAlpha)  // Clamp into [0, 1]
 for each result:
-  rrfScore = alpha * (1 / (K + semantic_rank)) + 
-             (1-alpha) * (1 / (K + keyword_rank))
+  rrfScore = alpha * (1 / (K + semantic_rank)) +
+             (1 - alpha) * (1 / (K + keyword_rank))
 
 // 3. Calculate confidence scores
 confidence = 
-  (similarity >= 0.70 && keywordScore > 0) ? 'high' :   // Both agree
-  (similarity >= 0.70) ? 'high' :                        // Strong semantic
-  (keywordScore > 0.5) ? 'medium' :                      // Decent keyword
-  'low'                                                   // Weak match
+  (similarity >= 0.68 && keywordScore > 0) ? 'high' :   // Both agree
+  (similarity >= 0.68) ? 'high' :                       // Strong semantic
+  (similarity >= 0.58 || keywordScore > 0.5) ? 'medium' :
+  'low'
 
 // 4. Sort by RRF score and return top K with confidence
 return sortedResults.slice(0, topK)
 ```
 
 **Why Weighted RRF?**:
-- Trusts high-precision semantic search (0.70 threshold = 100% precision)
+- Trusts high-precision semantic search (0.68+ regarded as strong matches)
 - Keyword provides recall safety net (catches what semantic misses)
 - Configurable α parameter for different query types
 - Confidence scoring builds user trust
+- Result objects include `fusionScore` (final RRF value) and `sourceScores` (per-source contribution map) for debugging and analytics.
+- `sanitizeAlpha` clamps caller overrides into `[0,1]`, and invalid weight vectors fall back to uniform weights to prevent negative or runaway scores.
 
 **Configuration** (from lib/config/searchConfig.ts):
 ```typescript
 DEFAULT_TOP_K = 10
-DEFAULT_MIN_SIMILARITY = 0.70     // Validated optimal threshold
+DEFAULT_MIN_SIMILARITY = 0.58     // Tuned for recall; 0.68+ treated as strong match
 RRF_CONSTANT = 60
 SEARCH_MULTIPLIER = 3             // Fetch 3x results (increased for sparse semantic)
-DEFAULT_ALPHA = 0.7               // 70% semantic, 30% keyword
+DEFAULT_ALPHA = 0.9               // 90% semantic, 10% keyword (clamped in sanitizeAlpha)
 ```
 
 **Validated Performance**:
 - **Precision**: 92.9% (tested on 500-page corpus)
-- **Recall**: 81.0%
+- **Recall (metric)**: 81.0%
 - **MRR**: 0.929
 - **Confidence Distribution**: 7.9 high, 2.1 medium (avg per query)
 
@@ -810,8 +816,8 @@ for each page:
   for each passage:
     similarity = dotProduct(queryEmbedding, passage.embedding)
     
-    // Filter by threshold (0.70 = validated optimal)
-    if (similarity >= 0.70):
+    // Filter by threshold (default: 0.58, configurable)
+    if (similarity >= opts.minSimilarity):
       candidates.push({ page, passage, similarity })
 
 // 4. Group by page and calculate scores
@@ -821,13 +827,13 @@ for each page with matching passages:
     score += log(passageCount) * 0.05  // Multi-passage bonus
 
 // 5. Sort and return (DYNAMIC count, not forced top-K)
-return sorted.filter(score >= 0.70).slice(0, maxResults)
+return sorted.filter(score >= opts.minSimilarity).slice(0, maxResults)
 ```
 
 **Key Improvements**:
 - **Passage-only**: No page/title/URL embeddings (simpler, better precision)
 - **Threshold-based**: Returns dynamic count (5-12 results vs forced 10)
-- **High precision**: 0.70 threshold achieves 100% precision in testing
+- **High precision**: Similarity ≥0.68 is treated as a strong match; 0.70 maintained 100% precision in experiments while the default 0.58 improves recall
 - **Content passages**: More discriminating than titles for semantic search
 
 **Dot Product (Optimal for Normalized Vectors)**:
@@ -1005,7 +1011,7 @@ async generateEmbedding(text: string, taskType: 'query' | 'document'): Promise<F
 
 **Schema**:
 ```typescript
-Database: 'RecallDB'
+Database: 'RewindDB'
 Version: 1
 
 ObjectStore: 'pages'
@@ -1517,7 +1523,7 @@ npm run build
 # Click "Load unpacked" → select /dist directory
 
 # 5. Verify installation
-# Check for "Recall" extension in list
+# Check for "Rewind." extension in list
 # Open popup to verify stats page loads
 ```
 
@@ -1605,21 +1611,21 @@ export const CHUNKER_CONFIG = {
 1. **Simplified Passage-Only Architecture**
    - Removed title/URL/page-level embeddings
    - Passage embeddings only (simpler, better precision)
-   - Validated: 100% precision @ 0.70 threshold
+   - Validated: similarities ≥0.68 behave as strong matches; 0.70 delivered 100% precision during testing while lower defaults widen recall
 
 2. **Weighted Reciprocal Rank Fusion**
-   - Added configurable α parameter (default: 0.7)
-   - 70% semantic, 30% keyword (trusts high-precision semantic)
-   - Better than equal weighting
+   - Added configurable α parameter (default: 0.9)
+   - `sanitizeAlpha` clamps overrides into `[0,1]`; mismatched weight vectors fall back to uniform
+   - Keeps semantic signal dominant while still merging keyword recall
 
 3. **Confidence Scoring**
-   - High: Strong semantic (similarity ≥ 0.70)
-   - Medium: Good keyword (score > 0.5)
-   - Low: Weak matches
+   - High: Semantic ≥ 0.68 (with or without keyword agreement)
+   - Medium: Semantic ≥ 0.58 or keyword score > 0.5
+  - Low: Remaining matches
    - Builds user trust in results
 
 4. **Optimized Thresholds & Parameters**
-   - minSimilarity: 0.35 → **0.70** (validated optimal)
+   - minSimilarity: 0.35 → **0.58** (validated optimal)
    - SEARCH_MULTIPLIER: 2 → **3** (handles sparse semantic results)
    - Dynamic result counts (not forced top-10)
 
@@ -1627,6 +1633,10 @@ export const CHUNKER_CONFIG = {
    - Tested on 500-page realistic corpus
    - Precision: 92.9%, Recall: 81.0%, MRR: 0.929
    - Full pipeline validated: extraction → indexing → search
+
+6. **Chunked History & Export Streaming**
+   - `GET_ALL_PAGES` returns metadata in 100-record chunks to stay under Chrome message limits
+   - Added `EXPORT_INDEX` message with 25-record chunks and a temporary sidebar button to download full IndexedDB contents for offline analysis
 
 ## Future Enhancements
 

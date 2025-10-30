@@ -1,8 +1,8 @@
-# Rewind - Private AI Search for Your Browser History
+# Rewind. - Private AI Search for Your Browser History
 
 > Search what you meant, not what you typed — with on-device AI.
 
-**Rewind** is a Chrome extension that lets you search your browsing history using natural language, powered entirely by on-device AI. No data ever leaves your machine.
+**Rewind.** is a Chrome extension that lets you search your browsing history using natural language, powered entirely by on-device AI. No data ever leaves your machine.
 
 ## Key Features
 
@@ -135,7 +135,7 @@ All processing happens **100% locally**:
 
 - **Research**: "What did I read about quantum computing last week?"
 - **Learning**: "Compare the React hooks I researched"
-- **Recall**: "Find that article about Docker networking"
+- **Rewind.**: "Find that article about Docker networking"
 - **Discovery**: "Show me pages about machine learning"
 - **Synthesis**: "Summarize what I learned about TypeScript generics"
 
@@ -164,4 +164,3 @@ The extension auto-indexes pages as you browse. Default settings:
 ## License
 
 MIT
-

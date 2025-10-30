@@ -123,8 +123,8 @@ export const loggers = {
   indexingQueue: createLogger('IndexingQueue'),
   offscreenManager: createLogger('OffscreenManager'),
   summarizerService: createLogger('SummarizerService'),
-  sidebar: createLogger('Rewind Sidebar'),
-  popup: createLogger('Popup'),
+  sidebar: createLogger('Rewind. Sidebar'),
+  popup: createLogger('Rewind. Popup'),
   contentScript: createLogger('ContentScript'),
   offscreenSummarizer: createLogger('OffscreenSummarizer'),
 } as const;

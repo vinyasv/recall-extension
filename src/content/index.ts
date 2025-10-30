@@ -1,5 +1,5 @@
 /**
- * Recall Content Script
+ * Rewind. Content Script
  * Extracts page content for indexing
  * This will be injected into web pages
  */
@@ -7,23 +7,23 @@
 import { ContentExtractor } from './ContentExtractor';
 import { createSidebar } from './sidebar';
 
-console.log('[Recall] Content script loaded');
+console.log('[Rewind.] Content script loaded');
 
 // Initialize sidebar overlay when DOM is ready
 if (document.readyState === 'loading') {
-  console.log('[Recall] DOM is loading, waiting for DOMContentLoaded...');
+  console.log('[Rewind.] DOM is loading, waiting for DOMContentLoaded...');
   document.addEventListener('DOMContentLoaded', () => {
-    console.log('[Recall] DOM ready, creating sidebar...');
+    console.log('[Rewind.] DOM ready, creating sidebar...');
     createSidebar();
   });
 } else {
-  console.log('[Recall] DOM already ready, creating sidebar immediately...');
+  console.log('[Rewind.] DOM already ready, creating sidebar immediately...');
   createSidebar();
 }
 
 // Also try to initialize after a delay for SPAs
 setTimeout(() => {
-  console.log('[Recall] Delayed initialization for SPAs...');
+  console.log('[Rewind.] Delayed initialization for SPAs...');
   createSidebar(); // Will skip if already created
 }, 1000);
 
@@ -35,12 +35,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     // Handle async extraction properly
     (async () => {
       try {
-        console.log('[Recall] Extracting content for:', window.location.href);
+        console.log('[Rewind.] Extracting content for:', window.location.href);
         const data = await ContentExtractor.extract();
-        console.log('[Recall] Content extraction successful:', data.textLength, 'chars');
+        console.log('[Rewind.] Content extraction successful:', data.textLength, 'chars');
         sendResponse({ success: true, data });
       } catch (error) {
-        console.error('[Recall] Failed to extract content:', error);
+        console.error('[Rewind.] Failed to extract content:', error);
         sendResponse({ success: false, error: (error as Error).message });
       }
     })();
@@ -59,4 +59,4 @@ chrome.runtime.sendMessage({ type: 'CONTENT_SCRIPT_READY' }).catch(() => {
   // Ignore errors if background script is not ready
 });
 
-console.log('[Recall] Content script ready');
+console.log('[Rewind.] Content script ready');

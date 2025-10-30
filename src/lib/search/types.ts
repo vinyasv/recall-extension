@@ -31,6 +31,12 @@ export interface SearchResult {
   /** Text snippet from the top matching passage (optional, semantic only) */
   topPassageSnippet?: string;
 
+  /** Final Reciprocal Rank Fusion score (optional, hybrid search) */
+  fusionScore?: number;
+
+  /** Contribution per source list used during fusion (optional, hybrid search) */
+  sourceScores?: Record<string, number>;
+
   /** Search mode that produced this result (optional) */
   searchMode?: SearchMode;
 

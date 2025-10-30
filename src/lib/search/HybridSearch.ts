@@ -18,6 +18,20 @@ const DEFAULT_OPTIONS: Required<Pick<SearchOptions, 'k' | 'mode'>> = {
   mode: 'hybrid',
 };
 
+function sanitizeAlpha(alpha: number | undefined): number {
+  if (typeof alpha !== 'number' || Number.isNaN(alpha)) {
+    return RRF_CONFIG.DEFAULT_ALPHA;
+  }
+
+  const clamped = Math.min(Math.max(alpha, 0), 1);
+
+  if (clamped !== alpha) {
+    loggers.hybridSearch.warn('Alpha weight out of range; clamping', alpha, '→', clamped);
+  }
+
+  return clamped;
+}
+
 /**
  * Weighted Reciprocal Rank Fusion (RRF) algorithm
  * Combines ranked lists from multiple sources with configurable weights
@@ -31,17 +45,44 @@ const DEFAULT_OPTIONS: Required<Pick<SearchOptions, 'k' | 'mode'>> = {
 function weightedReciprocalRankFusion(
   rankedLists: SearchResult[][],
   weights: number[] = [1.0, 1.0],
-  k: number = RRF_CONFIG.K
-): SearchResult[] {
-  const scoreMap = new Map<string, SearchResult>();
+  k: number = RRF_CONFIG.K,
+  sourceLabels: string[] = []
+): Array<SearchResult & { fusionScore: number; sourceScores: Record<string, number> }> {
+  if (rankedLists.length === 0) {
+    return [];
+  }
 
-  // Normalize weights to sum to 1.0
-  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-  const normalizedWeights = weights.map(w => w / totalWeight);
+  const listCount = rankedLists.length;
+  const defaultWeight = 1 / listCount;
+  let normalizedWeights: number[];
 
-  for (let i = 0; i < rankedLists.length; i++) {
-    const rankedList = rankedLists[i];
-    const weight = normalizedWeights[i] || 1.0;
+  const hasInvalidWeights =
+    weights.length !== listCount ||
+    weights.some((w) => !Number.isFinite(w) || w < 0);
+
+  if (hasInvalidWeights) {
+    loggers.hybridSearch.warn(
+      'Invalid RRF weights provided; reverting to uniform distribution for',
+      listCount,
+      'lists'
+    );
+    normalizedWeights = new Array(listCount).fill(defaultWeight);
+  } else {
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    normalizedWeights =
+      totalWeight === 0
+        ? new Array(listCount).fill(defaultWeight)
+        : weights.map(w => w / totalWeight);
+  }
+
+  const scoreMap = new Map<
+    string,
+    { result: SearchResult; fusionScore: number; sourceScores: Record<string, number> }
+  >();
+
+  rankedLists.forEach((rankedList, listIndex) => {
+    const weight = normalizedWeights[listIndex] ?? defaultWeight;
+    const sourceKey = sourceLabels[listIndex] ?? `source_${listIndex}`;
 
     rankedList.forEach((result, index) => {
       const rank = index + 1; // 1-indexed rank
@@ -49,21 +90,28 @@ function weightedReciprocalRankFusion(
 
       const existing = scoreMap.get(result.page.id);
       if (existing) {
-        // Combine scores if page appears in multiple lists
-        existing.relevanceScore += rrfScore;
+        existing.fusionScore += rrfScore;
+        existing.sourceScores[sourceKey] = (existing.sourceScores[sourceKey] || 0) + rrfScore;
       } else {
-        // First time seeing this page
+        const sourceScores: Record<string, number> = {
+          [sourceKey]: rrfScore,
+        };
         scoreMap.set(result.page.id, {
-          ...result,
-          relevanceScore: rrfScore,
+          result,
+          fusionScore: rrfScore,
+          sourceScores,
         });
       }
     });
-  }
+  });
 
-  // Convert map to array and sort by combined RRF score
-  const combined = Array.from(scoreMap.values());
-  combined.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  const combined = Array.from(scoreMap.values()).map(({ result, fusionScore, sourceScores }) => ({
+    ...result,
+    fusionScore,
+    sourceScores,
+  }));
+
+  combined.sort((a, b) => b.fusionScore - a.fusionScore);
 
   return combined;
 }
@@ -152,7 +200,8 @@ export class HybridSearch {
     loggers.hybridSearch.debug('Running hybrid search (semantic + keyword + weighted RRF)');
 
     // Get alpha parameter (default: 0.9 = 90% semantic, 10% keyword)
-    const alpha = options.alpha !== undefined ? options.alpha : RRF_CONFIG.DEFAULT_ALPHA;
+    const requestedAlpha = options.alpha !== undefined ? options.alpha : RRF_CONFIG.DEFAULT_ALPHA;
+    const alpha = sanitizeAlpha(requestedAlpha);
     loggers.hybridSearch.debug('Using alpha:', alpha, '(semantic weight)');
 
     const [queryEmbedding, keywordResults] = await Promise.all([
@@ -181,22 +230,25 @@ export class HybridSearch {
     // Apply weighted RRF fusion (semantic gets alpha weight, keyword gets 1-alpha)
     const fusedResults = weightedReciprocalRankFusion(
       [semanticResults, keywordAsSearchResults],
-      [alpha, 1 - alpha]
+      [alpha, 1 - alpha],
+      RRF_CONFIG.K,
+      ['semantic', 'keyword']
     );
 
     // Enrich results with metadata and confidence scoring
     const enrichedResults = fusedResults.map(result => {
       const keywordMatch = keywordResults.find(kr => kr.page.id === result.page.id);
       const semanticMatch = semanticResults.find(sr => sr.page.id === result.page.id);
-      
+
       const similarity = semanticMatch?.similarity || 0;
       const keywordScore = keywordMatch?.score;
-      
+
       // Calculate confidence level
       const confidence = calculateConfidence(similarity, keywordScore);
 
       return {
         ...result,
+        relevanceScore: semanticMatch?.relevanceScore ?? result.relevanceScore ?? similarity,
         similarity,
         keywordScore,
         matchedTerms: keywordMatch?.matchedTerms,

@@ -1,9 +1,10 @@
 /**
- * Rewind Sidebar Overlay
+ * Rewind. Sidebar Overlay
  * Injects a beautiful sidebar into webpages for semantic search
  */
 
 import { loggers } from '../lib/utils/logger';
+import type { PageMetadata } from '../lib/storage/types';
 
 loggers.sidebar.debug('Initializing sidebar module...');
 
@@ -11,6 +12,10 @@ let sidebarOpen = false;
 let activeSearchQuery: string | null = null;
 let sidebarContainer: HTMLElement | null = null;
 let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+let historyPagesBuffer: PageMetadata[] = [];
+let expectedHistoryTotal = 0;
+let historyChunkRenderTimeout: ReturnType<typeof setTimeout> | null = null;
+let activeHistoryRequestId: string | null = null;
 
 /**
  * Create and inject the sidebar overlay
@@ -58,7 +63,7 @@ export function createSidebar(): void {
           <div class="rewind-chat-messages" id="rewindChatMessages">
             <div class="rewind-chat-empty">
               <div class="rewind-chat-empty-title">Your personal AI, with 100% privacy.</div>
-              <div class="rewind-chat-empty-subtitle">Rewind indexes your history on-device. Ask a question to get answers, not just links.</div>
+              <div class="rewind-chat-empty-subtitle">Rewind. indexes your history on-device. Ask a question to get answers, not just links.</div>
               <div class="rewind-chat-empty-input-container">
                 <input
                   type="text"
@@ -412,7 +417,6 @@ function injectStyles(): void {
       color: rgba(0, 0, 0, 0.4);
     }
 
-    /* Clear Button */
     .rewind-clear-btn {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       font-weight: 300;
@@ -901,7 +905,7 @@ function injectStyles(): void {
     document.head.appendChild(style);
     loggers.sidebar.debug('Styles successfully injected');
   } catch (error) {
-    console.error('[Rewind Sidebar] Error injecting styles:', error);
+    console.error('[Rewind. Sidebar] Error injecting styles:', error);
   }
 }
 
@@ -1046,17 +1050,17 @@ export function closeSidebar(): void {
  * Handle PAGE_INDEXED message for real-time updates
  */
 function handlePageIndexed(pageInfo: { id: string; url: string; title: string; timestamp: number; isUpdate: boolean }): void {
-  console.log('[Rewind Sidebar] Page indexed:', pageInfo.title, pageInfo.isUpdate ? '(updated)' : '(new)');
+  console.log('[Rewind. Sidebar] Page indexed:', pageInfo.title, pageInfo.isUpdate ? '(updated)' : '(new)');
 
   // Only refresh if sidebar is open
   if (!sidebarOpen) {
-    console.log('[Rewind Sidebar] Sidebar not open, skipping refresh');
+    console.log('[Rewind. Sidebar] Sidebar not open, skipping refresh');
     return;
   }
 
   // Check if user is actively searching
   if (activeSearchQuery) {
-    console.log('[Rewind Sidebar] Active search in progress, skipping refresh to preserve results');
+    console.log('[Rewind. Sidebar] Active search in progress, skipping refresh to preserve results');
     return;
   }
 
@@ -1066,7 +1070,7 @@ function handlePageIndexed(pageInfo: { id: string; url: string; title: string; t
   }
 
   refreshTimeout = setTimeout(() => {
-    console.log('[Rewind Sidebar] Refreshing sidebar with latest data...');
+    console.log('[Rewind. Sidebar] Refreshing sidebar with latest data...');
     loadAllHistory();
   }, 1000); // Wait 1 second after last update
 }
@@ -1095,6 +1099,14 @@ async function loadAllHistory(): Promise<void> {
 
   resultsContainer.innerHTML = '<div class="rewind-loading"><div class="rewind-skeleton-item"><div class="rewind-skeleton-time"></div><div class="rewind-skeleton-icon"></div><div class="rewind-skeleton-text"></div></div></div>';
 
+  historyPagesBuffer = [];
+  expectedHistoryTotal = 0;
+  activeHistoryRequestId = null;
+  if (historyChunkRenderTimeout) {
+    clearTimeout(historyChunkRenderTimeout);
+    historyChunkRenderTimeout = null;
+  }
+
   try {
     if (typeof chrome === 'undefined' || !chrome.runtime) {
       throw new Error('Chrome runtime not available');
@@ -1102,13 +1114,35 @@ async function loadAllHistory(): Promise<void> {
     
     const response = await chrome.runtime.sendMessage({ type: 'GET_ALL_PAGES' });
     
-    if (response && response.success && response.pages) {
-      renderResults(response.pages, false);
+    if (!response || !response.success) {
+      showEmptyState();
+      return;
+    }
+
+    if (response.chunked) {
+      if (typeof response.requestId !== 'string') {
+        console.warn('[Rewind. Sidebar] Missing requestId in chunked history response');
+        showEmptyState();
+        return;
+      }
+
+      activeHistoryRequestId = response.requestId;
+      expectedHistoryTotal = typeof response.total === 'number' ? response.total : 0;
+
+      if (expectedHistoryTotal === 0) {
+        showEmptyState();
+      }
+      return;
+    }
+
+    if (Array.isArray(response.pages) && response.pages.length > 0) {
+      historyPagesBuffer = response.pages;
+      renderResults(historyPagesBuffer, false);
     } else {
       showEmptyState();
     }
   } catch (error) {
-    console.error('[Rewind Sidebar] Error loading history:', error);
+    console.error('[Rewind. Sidebar] Error loading history:', error);
     showEmptyState();
   }
 }
@@ -1139,7 +1173,7 @@ async function performSearch(query: string): Promise<void> {
       showEmptyState();
     }
   } catch (error) {
-    console.error('[Rewind Sidebar] Error searching:', error);
+    console.error('[Rewind. Sidebar] Error searching:', error);
     activeSearchQuery = null;
     showEmptyState();
   }
@@ -1148,6 +1182,31 @@ async function performSearch(query: string): Promise<void> {
 /**
  * Render results
  */
+function scheduleHistoryRender(force: boolean = false): void {
+  if (activeSearchQuery) {
+    return;
+  }
+
+  if (historyChunkRenderTimeout) {
+    clearTimeout(historyChunkRenderTimeout);
+    historyChunkRenderTimeout = null;
+  }
+
+  const delay = force ? 0 : 100;
+  historyChunkRenderTimeout = setTimeout(() => {
+    historyChunkRenderTimeout = null;
+
+    if (historyPagesBuffer.length === 0) {
+      if (force) {
+        showEmptyState();
+      }
+      return;
+    }
+
+    renderResults(historyPagesBuffer, false);
+  }, delay);
+}
+
 function renderResults(pages: any[], isSearch: boolean = true): void {
   const resultsContainer = sidebarContainer?.querySelector('#rewindResultsContainer');
   if (!resultsContainer) return;
@@ -1240,7 +1299,7 @@ async function clearHistory(): Promise<void> {
       showEmptyState();
     }
   } catch (error) {
-    console.error('[Rewind Sidebar] Error clearing history:', error);
+    console.error('[Rewind. Sidebar] Error clearing history:', error);
   }
 }
 
@@ -1385,7 +1444,7 @@ async function askQuestion(question: string): Promise<void> {
       throw new Error(response?.error || 'Failed to get answer');
     }
   } catch (error) {
-    console.error('[Rewind Sidebar] Error asking question:', error);
+    console.error('[Rewind. Sidebar] Error asking question:', error);
 
     // Remove loading indicator
     loadingEl.remove();
@@ -1487,7 +1546,7 @@ document.addEventListener('keydown', (e) => {
   // Cmd/Ctrl + Shift + E to toggle sidebar
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'e') {
     e.preventDefault();
-    console.log('[Rewind Sidebar] Keyboard shortcut triggered:', e.key);
+    console.log('[Rewind. Sidebar] Keyboard shortcut triggered:', e.key);
     toggleSidebar();
   }
 });
@@ -1495,18 +1554,38 @@ document.addEventListener('keydown', (e) => {
 // Listen for messages from extension
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message.type === 'TOGGLE_SIDEBAR') {
-      toggleSidebar();
-      sendResponse({ success: true });
-    } else if (message.type === 'PAGE_INDEXED') {
-      // Real-time update when a new page is indexed
-      handlePageIndexed(message.data);
-      sendResponse({ success: true });
+    switch (message.type) {
+      case 'TOGGLE_SIDEBAR':
+        toggleSidebar();
+        sendResponse({ success: true });
+        return false;
+      case 'PAGE_INDEXED':
+        // Real-time update when a new page is indexed
+        handlePageIndexed(message.data);
+        sendResponse({ success: true });
+        return false;
+      case 'GET_ALL_PAGES_CHUNK':
+        if (typeof message.requestId === 'string' && message.requestId === activeHistoryRequestId) {
+          if (Array.isArray(message.pages) && message.pages.length > 0) {
+            historyPagesBuffer.push(...(message.pages as PageMetadata[]));
+            scheduleHistoryRender(false);
+          }
+        }
+        sendResponse({ success: true });
+        return false;
+      case 'GET_ALL_PAGES_COMPLETE':
+        if (typeof message.requestId === 'string' && message.requestId === activeHistoryRequestId) {
+          activeHistoryRequestId = null;
+          expectedHistoryTotal = typeof message.totalPages === 'number' ? message.totalPages : expectedHistoryTotal;
+          scheduleHistoryRender(true);
+        }
+        sendResponse({ success: true });
+        return false;
+      default:
+        return false;
     }
-    return true;
   });
 }
 
 // Log that sidebar is ready
-console.log('[Rewind Sidebar] Sidebar script loaded and ready');
-
+console.log('[Rewind. Sidebar] Sidebar script loaded and ready');

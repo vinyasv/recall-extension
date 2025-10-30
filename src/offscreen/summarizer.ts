@@ -3,7 +3,7 @@
  * This bypasses user activation requirements by maintaining activation state
  */
 
-console.log('[Recall Offscreen] Initializing Prompt API...');
+console.log('[Rewind. Offscreen] Initializing Prompt API...');
 
 // Make this file a module to fix TypeScript global scope augmentation
 export {};
@@ -55,28 +55,28 @@ class OffscreenPromptHandler {
    * Initialize the Prompt API
    */
   async initialize(): Promise<void> {
-    console.log('[Recall Offscreen] Checking Prompt API availability...');
+    console.log('[Rewind. Offscreen] Checking Prompt API availability...');
 
     try {
       // Check if Prompt API is available
       if (!('LanguageModel' in self)) {
-        console.warn('[Recall Offscreen] Chrome Prompt API not supported');
+        console.warn('[Rewind. Offscreen] Chrome Prompt API not supported');
         return;
       }
 
       const availability = await LanguageModel.availability();
-      console.log('[Recall Offscreen] Prompt API availability:', availability);
+      console.log('[Rewind. Offscreen] Prompt API availability:', availability);
 
       if (availability === 'available' || availability === 'downloadable') {
         this.promptApiAvailable = true;
-        console.log('[Recall Offscreen] ✅ Prompt API is ready');
+        console.log('[Rewind. Offscreen] ✅ Prompt API is ready');
       } else {
-        console.warn('[Recall Offscreen] Prompt API not available:', availability);
+        console.warn('[Rewind. Offscreen] Prompt API not available:', availability);
       }
 
       this.isInitialized = true;
     } catch (error) {
-      console.error('[Recall Offscreen] Initialization failed:', error);
+      console.error('[Rewind. Offscreen] Initialization failed:', error);
       this.isInitialized = true; // Mark as initialized even on error
     }
   }
@@ -95,7 +95,7 @@ class OffscreenPromptHandler {
     const startTime = Date.now();
 
     try {
-      console.log(`[Recall Offscreen] Processing prompt request ${request.id}`);
+      console.log(`[Rewind. Offscreen] Processing prompt request ${request.id}`);
 
       if (!this.promptApiAvailable) {
         throw new Error('Chrome Prompt API not available');
@@ -114,7 +114,7 @@ class OffscreenPromptHandler {
 
         const processingTime = Date.now() - startTime;
 
-        console.log(`[Recall Offscreen] Prompt request ${request.id} completed in ${processingTime}ms`);
+        console.log(`[Rewind. Offscreen] Prompt request ${request.id} completed in ${processingTime}ms`);
 
         return {
           id: request.id,
@@ -126,15 +126,15 @@ class OffscreenPromptHandler {
       } finally {
         try {
           await session.destroy();
-          console.log(`[Recall Offscreen] Session for request ${request.id} destroyed`);
+          console.log(`[Rewind. Offscreen] Session for request ${request.id} destroyed`);
         } catch (error) {
-          console.warn(`[Recall Offscreen] Error destroying session:`, error);
+          console.warn(`[Rewind. Offscreen] Error destroying session:`, error);
         }
       }
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      console.error(`[Recall Offscreen] Prompt request ${request.id} failed:`, error);
+      console.error(`[Rewind. Offscreen] Prompt request ${request.id} failed:`, error);
 
       return {
         id: request.id,
@@ -150,7 +150,7 @@ class OffscreenPromptHandler {
    */
   public async processPromptRequestStreaming(request: PromptRequest): Promise<void> {
     try {
-      console.log(`[Recall Offscreen] Processing streaming prompt request ${request.id}`);
+      console.log(`[Rewind. Offscreen] Processing streaming prompt request ${request.id}`);
 
       if (!this.promptApiAvailable) {
         throw new Error('Chrome Prompt API not available');
@@ -170,7 +170,7 @@ class OffscreenPromptHandler {
             requestId: request.id,
             chunk
           }).catch(error => {
-            console.error('[Recall Offscreen] Failed to send chunk:', error);
+            console.error('[Rewind. Offscreen] Failed to send chunk:', error);
           });
         }
 
@@ -179,22 +179,22 @@ class OffscreenPromptHandler {
           type: 'PROMPT_STREAM_COMPLETE',
           requestId: request.id
         }).catch(error => {
-          console.error('[Recall Offscreen] Failed to send completion:', error);
+          console.error('[Rewind. Offscreen] Failed to send completion:', error);
         });
 
-        console.log(`[Recall Offscreen] Streaming prompt request ${request.id} completed`);
+        console.log(`[Rewind. Offscreen] Streaming prompt request ${request.id} completed`);
 
       } finally {
         try {
           await session.destroy();
-          console.log(`[Recall Offscreen] Session for request ${request.id} destroyed`);
+          console.log(`[Rewind. Offscreen] Session for request ${request.id} destroyed`);
         } catch (error) {
-          console.warn(`[Recall Offscreen] Error destroying session:`, error);
+          console.warn(`[Rewind. Offscreen] Error destroying session:`, error);
         }
       }
 
     } catch (error) {
-      console.error(`[Recall Offscreen] Streaming prompt request ${request.id} failed:`, error);
+      console.error(`[Rewind. Offscreen] Streaming prompt request ${request.id} failed:`, error);
 
       // Send error signal
       chrome.runtime.sendMessage({
@@ -202,7 +202,7 @@ class OffscreenPromptHandler {
         requestId: request.id,
         error: error instanceof Error ? error.message : 'Unknown error'
       }).catch(err => {
-        console.error('[Recall Offscreen] Failed to send error:', err);
+        console.error('[Rewind. Offscreen] Failed to send error:', err);
       });
     }
   }
@@ -213,7 +213,7 @@ const promptHandler = new OffscreenPromptHandler();
 
 // Handle messages from service worker
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  console.log('[Recall Offscreen] Received message:', message.type);
+  console.log('[Rewind. Offscreen] Received message:', message.type);
 
   if (message.type === 'PROMPT_API_STATUS') {
     const available = promptHandler.isAvailable();
@@ -229,7 +229,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         type: 'PROMPT_RESPONSE',
         response
       }).catch(error => {
-        console.error('[Recall Offscreen] Failed to send prompt response:', error);
+        console.error('[Rewind. Offscreen] Failed to send prompt response:', error);
       });
     });
 
@@ -252,4 +252,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // Initialize when ready
 promptHandler.initialize();
 
-console.log('[Recall Offscreen] Prompt API handler initialized');
+console.log('[Rewind. Offscreen] Prompt API handler initialized');

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Rewind",
+  "name": "Rewind.",
   "version": "1.0.0",
   "description": "Private Semantic Search for Browser History - Search what you meant, not what you typed",
 
@@ -61,7 +61,7 @@
         "default": "Ctrl+Shift+E",
         "mac": "Command+Shift+E"
       },
-      "description": "Toggle Rewind sidebar"
+      "description": "Toggle Rewind. sidebar"
     }
   }
 }

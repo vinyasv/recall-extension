@@ -1,5 +1,5 @@
 {
-  "name": "memex-extension",
+  "name": "rewind-extension",
   "version": "1.0.0",
   "description": "Private Semantic Search for Browser History - Search what you meant, not what you typed",
   "type": "module",
